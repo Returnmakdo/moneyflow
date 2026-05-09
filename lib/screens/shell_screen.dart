@@ -9,7 +9,7 @@ class ShellTabSignals {
   static final dashboardTab = ValueNotifier<int>(0);
   static final transactionsTab = ValueNotifier<int>(0);
   static final budgetsTab = ValueNotifier<int>(0);
-  static final fixedTab = ValueNotifier<int>(0);
+  static final accountsTab = ValueNotifier<int>(0);
   static final insightsTab = ValueNotifier<int>(0);
 
   static void bump(int index) {
@@ -21,7 +21,7 @@ class ShellTabSignals {
       case 2:
         budgetsTab.value++;
       case 3:
-        fixedTab.value++;
+        accountsTab.value++;
       case 4:
         insightsTab.value++;
     }
@@ -36,7 +36,8 @@ class ShellScreen extends StatelessWidget {
     _Tab('대시보드', Icons.dashboard_outlined, Icons.dashboard),
     _Tab('거래내역', Icons.receipt_long_outlined, Icons.receipt_long),
     _Tab('예산', Icons.savings_outlined, Icons.savings),
-    _Tab('정기지출', Icons.repeat, Icons.repeat_on),
+    _Tab('자산', Icons.account_balance_wallet_outlined,
+        Icons.account_balance_wallet),
     _Tab('분석', Icons.insights_outlined, Icons.insights),
   ];
 

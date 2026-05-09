@@ -98,6 +98,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () => context.go('/settings/categories'),
               ),
               _MenuItem(
+                icon: Icons.repeat,
+                title: '정기 거래 관리',
+                subtitle: '월세·구독료·월급처럼 매달 반복되는 거래',
+                onTap: () => context.go('/settings/fixed'),
+              ),
+              _MenuItem(
                 icon: Icons.upload_file_outlined,
                 title: '데이터 가져오기',
                 subtitle: 'CSV로 거래 일괄 등록',

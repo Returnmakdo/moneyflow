@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart' show AuthChangeEvent;
 
 import 'auth.dart';
 import 'screens/account_settings_screen.dart';
+import 'screens/accounts_screen.dart';
 import 'screens/budgets_screen.dart';
 import 'screens/categories_screen.dart';
 import 'screens/dashboard_screen.dart';
@@ -125,6 +126,10 @@ class _BudgetAppState extends State<BudgetApp> {
               builder: (_, _) => const CategoriesScreen(),
             ),
             GoRoute(
+              path: 'fixed',
+              builder: (_, _) => const FixedExpensesScreen(),
+            ),
+            GoRoute(
               path: 'help',
               builder: (_, _) => const HelpScreen(),
             ),
@@ -182,6 +187,10 @@ class _BudgetAppState extends State<BudgetApp> {
                     initialSubIsNull: p['subnull'] == '1',
                     initialQ: p['q'],
                     initialFixed: p['fixed'],
+                    initialDateFrom: p['from'],
+                    initialDateTo: p['to'],
+                    initialCardId: int.tryParse(p['cardId'] ?? ''),
+                    initialCardName: p['cardName'],
                   );
                 },
               ),
@@ -194,8 +203,8 @@ class _BudgetAppState extends State<BudgetApp> {
             ]),
             StatefulShellBranch(routes: [
               GoRoute(
-                path: '/fixed',
-                builder: (_, _) => const FixedExpensesScreen(),
+                path: '/accounts',
+                builder: (_, _) => const AccountsScreen(),
               ),
             ]),
             StatefulShellBranch(routes: [

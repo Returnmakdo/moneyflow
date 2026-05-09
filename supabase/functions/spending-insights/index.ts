@@ -20,10 +20,16 @@ const SYSTEM_PROMPT = `당신은 친근한 한국 가계부 코치입니다. 사
 2. 빈 줄 후 본문 ## 섹션 2~3개 (의미 있는 것만 골라서). 본문은 친근체 그대로.
 
 섹션 (정확히 다음 4개 이름만 사용. 의미 있는 것만 골라서, 보통 3~4개):
-- ## 이번 달 요약  → 총액, 전월 대비, 고정/변동을 한 문단으로
+- ## 이번 달 요약  → 총액, 전월 대비, 고정/변동, 수입·저축률(데이터 있을 때)을 한 문단으로
 - ## 눈에 띄는 패턴  → 카테고리 쏠림, 자주 간 가맹점, 주말·평일 차이, 이상치 거래를 근거 있게
 - ## 예산 체크  → 초과되거나 임박한 카테고리가 있을 때만 (예산 데이터 없으면 생략)
 - ## 다음 달 제안  → 구체적인 한 가지 행동 + 왜 효과적인지 근거 + 예상 효과 (3~4문장으로 풍부하게, 일반론 X)
+
+**수입 데이터 사용 규칙**:
+- 입력에 "## 수입 흐름" 섹션이 있으면 그 숫자만 사용. 추정·창작 X.
+- 수입 데이터는 "## 이번 달 요약" 한두 문장 + "## 다음 달 제안" 근거에서만 사용. 다른 섹션엔 끌어 쓰지 마.
+- 수입 데이터 자체가 없으면(섹션 부재) 수입·저축률 일절 언급 X.
+- 저축률 음수면 "적자"로 표현. 양수면 "흑자" 또는 "저축률 N%".
 
 중요: ## 헤더 텍스트는 위 4개와 정확히 일치해야 해 (UI에서 매칭됨). 다른 이름 X.
 
@@ -109,10 +115,10 @@ Deno.serve(async (req: Request) => {
 
     const [thisRes, prevRes, budgetsRes] = await Promise.all([
       supabase.from("transactions")
-        .select("date,major_category,sub_category,merchant,amount,is_fixed,memo")
+        .select("date,major_category,sub_category,merchant,amount,is_fixed,memo,account_id,type")
         .gte("date", `${month}-01`).lte("date", `${month}-31`),
       supabase.from("transactions")
-        .select("amount,major_category,is_fixed")
+        .select("amount,major_category,is_fixed,type")
         .gte("date", `${prevMonth}-01`).lte("date", `${prevMonth}-31`),
       supabase.from("budgets")
         .select("major,monthly_amount"),
@@ -124,8 +130,13 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const txs = thisRes.data || [];
-    const prevTxs = prevRes.data || [];
+    // 지출 분석은 expense에만, 저축률 계산용으로 income도 별도 집계.
+    const allThis = thisRes.data || [];
+    const allPrev = prevRes.data || [];
+    const txs = allThis.filter((t) => t.type === 'expense');
+    const prevTxs = allPrev.filter((t) => t.type === 'expense');
+    const incomeTxs = allThis.filter((t) => t.type === 'income');
+    const prevIncomeTxs = allPrev.filter((t) => t.type === 'income');
     const budgets = budgetsRes.data || [];
 
     if (txs.length === 0) {
@@ -242,8 +253,31 @@ Deno.serve(async (req: Request) => {
       ? `지난달 ${won(prevTotal)} → 이번달 ${won(total)} (${total - prevTotal >= 0 ? "+" : ""}${won(total - prevTotal)})`
       : `지난달 데이터 없음, 이번달 ${won(total)}`;
 
+    // 수입 집계 — 이번 달 수입 0이면 섹션 자체를 안 보냄(시스템 프롬프트가
+    // 수입 미언급으로 동작). 0보다 크면 저축률·흑자 분석에 사용.
+    const incomeTotal = incomeTxs.reduce((s, t) => s + Number(t.amount), 0);
+    const prevIncomeTotal = prevIncomeTxs.reduce((s, t) => s + Number(t.amount), 0);
+    const netSaving = incomeTotal - total;
+    const savingRate = incomeTotal > 0
+      ? Math.round((netSaving / incomeTotal) * 100)
+      : null;
+
     const sections: string[] = [];
     sections.push(`# ${month} 지출 데이터\n\n${diffStr}\n- 고정비: ${won(fixedTotal)}\n- 변동비: ${won(variableTotal)}\n- 거래 수: ${txs.length}건`);
+
+    if (incomeTotal > 0) {
+      const incLines: string[] = [];
+      incLines.push(`- 이번 달 수입: ${won(incomeTotal)}`);
+      if (prevIncomeTotal > 0) {
+        const incDiff = incomeTotal - prevIncomeTotal;
+        incLines.push(`- 지난 달 수입: ${won(prevIncomeTotal)} (${incDiff >= 0 ? "+" : ""}${won(incDiff)})`);
+      }
+      incLines.push(`- 순저축(수입 - 지출): ${won(netSaving)}`);
+      if (savingRate != null) {
+        incLines.push(`- 저축률: ${savingRate}%${savingRate < 0 ? " (적자)" : ""}`);
+      }
+      sections.push(`## 수입 흐름\n${incLines.join("\n")}`);
+    }
 
     sections.push(`## 카테고리별 (전체)\n${topMajors.map(([k, v]) => `- ${k}: ${won(v)}`).join("\n")}`);
 

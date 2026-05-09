@@ -146,8 +146,16 @@ class SpendingSummaryPage extends StatelessWidget {
     // 최근 거래)이 섞이는 걸 방지.
     final prevYm = shiftYm(d.month, -1);
     final twoMonthTrend = [
-      TrendPoint(ym: prevYm, total: d.prevMonthTotal),
-      TrendPoint(ym: d.month, total: d.thisMonthTotal),
+      TrendPoint(
+        ym: prevYm,
+        expenseTotal: d.prevMonthTotal,
+        incomeTotal: d.prevIncomeTotal,
+      ),
+      TrendPoint(
+        ym: d.month,
+        expenseTotal: d.thisMonthTotal,
+        incomeTotal: d.incomeTotal,
+      ),
     ];
 
     return _FadingScroll(
@@ -221,6 +229,8 @@ class SpendingPatternPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final byMerchant = <String, _MerchantAgg>{};
     for (final t in data.monthTxs) {
+      // 분석은 지출 기준 — 입금/이체/카드결제 거래는 제외.
+      if (t.type != 'expense') continue;
       if (t.isFixed) continue;
       final m = t.merchant;
       if (m == null || m.isEmpty) continue;

@@ -193,32 +193,29 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
               return _budgetsSkeleton();
             }
             final d = _data!;
-            return ListView(
+            // PageHeader는 0번, 그 이후는 카테고리 row.
+            return ListView.builder(
               controller: _scrollCtrl,
               padding: const EdgeInsets.fromLTRB(0, 0, 0, 90),
-              children: [
-                const PageHeader(
-                  title: '예산 설정',
-                  subtitle: '고정비는 예산에서 제외돼요.',
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Column(
-                    children: [
-                      for (final b in d.budgets)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: _BudgetEditCard(
-                            major: b.major,
-                            spent: d.variable[b.major] ?? 0,
-                            budget: b.monthlyAmount,
-                            controller: _ctrls[b.major]!,
-                          ),
-                        ),
-                    ],
+              itemCount: 1 + d.budgets.length,
+              itemBuilder: (ctx, i) {
+                if (i == 0) {
+                  return const PageHeader(
+                    title: '예산 설정',
+                    subtitle: '고정비는 예산에서 제외돼요.',
+                  );
+                }
+                final b = d.budgets[i - 1];
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  child: _BudgetEditCard(
+                    major: b.major,
+                    spent: d.variable[b.major] ?? 0,
+                    budget: b.monthlyAmount,
+                    controller: _ctrls[b.major]!,
                   ),
-                ),
-              ],
+                );
+              },
             );
           },
         ),

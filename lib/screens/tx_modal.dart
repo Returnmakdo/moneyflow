@@ -15,13 +15,20 @@ Future<TxModalResult> showTxModal(
   required CategoriesData cats,
   required Suggestions suggestions,
   Tx? tx,
+  // 신규 거래 등록 시 초기 type. 편집(tx!=null)이면 거래의 기존 type 사용.
+  String initialType = 'expense',
 }) async {
   final r = await showModalBottomSheet<TxModalResult>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     barrierColor: Colors.black.withValues(alpha: 0.5),
-    builder: (ctx) => _TxModal(cats: cats, suggestions: suggestions, tx: tx),
+    builder: (ctx) => _TxModal(
+      cats: cats,
+      suggestions: suggestions,
+      tx: tx,
+      initialType: initialType,
+    ),
   );
   return r ?? TxModalResult.none;
 }
@@ -31,10 +38,12 @@ class _TxModal extends StatefulWidget {
     required this.cats,
     required this.suggestions,
     this.tx,
+    this.initialType = 'expense',
   });
   final CategoriesData cats;
   final Suggestions suggestions;
   final Tx? tx;
+  final String initialType;
 
   @override
   State<_TxModal> createState() => _TxModalState();
@@ -49,21 +58,53 @@ class _TxModalState extends State<_TxModal> {
   late String _major;
   String? _sub;
   late bool _isFixed;
+  // 'expense' | 'income'. transfer는 다음 plan에서 추가.
+  late String _type;
   bool _saving = false;
 
   // 모달 안에서 카테고리/태그를 즉석 생성하면 cats가 갱신돼야 dropdown에 표시됨.
   // props는 immutable이라 state에 mutable 복사본을 둠.
+  // 모든 type(지출+수입) 카테고리를 보유하고 화면 노출 시 _type으로 필터.
   late CategoriesData _cats;
 
   bool get _editing => widget.tx != null;
+  bool get _isIncome => _type == 'income';
+  bool get _isTransfer => _type == 'transfer';
+
+  List<String> _typedMajors() => _cats.majorsOf(_type);
+
+  // 사용자 등록 계좌 — 수입의 입금 계좌 dropdown + 이체 모드의 from/to dropdown.
+  // listAccounts 비동기 fetch 후 setState로 채움.
+  List<Account> _accounts = const [];
+  // 등록된 신용카드 — 지출 모드 신용카드 결제 시 dropdown.
+  List<CreditCard> _cards = const [];
+  int? _selectedCardId;
+
+  // 이체 모드 출금/입금 계좌 ID. transfer일 때만 의미.
+  int? _fromAccountId;
+  int? _toAccountId;
+
+  // 수입 모드의 입금 계좌 ID. 자산 흐름에 정확히 반영되도록 명시 매핑.
+  int? _incomeAccountId;
+
+  // 지출 모드의 출금 계좌 ID + 결제수단 종류.
+  // _expensePaymentKind = 'account': 내 계좌(체크카드·현금·이체) — 출금 계좌 dropdown
+  // _expensePaymentKind = 'card':    신용카드 — 카드 자유 텍스트 (B4 정식 시스템 전 임시)
+  int? _expenseAccountId;
+  String _expensePaymentKind = 'account';
 
   @override
   void initState() {
     super.initState();
     final tx = widget.tx;
     _cats = widget.cats;
-    final majors = _cats.majors;
-    _major = tx?.majorCategory ?? (majors.isNotEmpty ? majors.first : '');
+    // 기존 거래 수정 시 그 거래의 type 사용, 신규는 호출자가 넘긴 initialType.
+    _type = tx?.type ?? widget.initialType;
+    final firstMajor = _typedMajors();
+    _major = tx?.majorCategory ??
+        (_isTransfer
+            ? '이체'
+            : (firstMajor.isNotEmpty ? firstMajor.first : ''));
     _sub = tx?.subCategory;
     _date = TextEditingController(text: tx?.date ?? todayIso());
     _amount = TextEditingController();
@@ -71,7 +112,50 @@ class _TxModalState extends State<_TxModal> {
     _merchant = TextEditingController(text: tx?.merchant ?? '');
     _card = TextEditingController(text: tx?.card ?? '');
     _memo = TextEditingController(text: tx?.memo ?? '');
-    _isFixed = tx?.isFixed ?? false;
+    // 수입 거래는 고정비 토글 없음.
+    _isFixed = _isIncome ? false : (tx?.isFixed ?? false);
+    _loadAccounts();
+  }
+
+  Future<void> _loadAccounts() async {
+    try {
+      final results = await Future.wait([
+        Api.instance.listAccounts(),
+        Api.instance.listCards(),
+      ]);
+      if (!mounted) return;
+      final accountList = results[0] as List<Account>;
+      final cardList = results[1] as List<CreditCard>;
+      setState(() {
+        _accounts = accountList;
+        _cards = cardList;
+        final tx = widget.tx;
+        if (tx?.type == 'transfer') {
+          _fromAccountId = tx?.fromAccountId;
+          _toAccountId = tx?.toAccountId;
+        } else {
+          _fromAccountId ??= accountList.isNotEmpty ? accountList.first.id : null;
+          _toAccountId ??= accountList.length >= 2 ? accountList[1].id : null;
+        }
+        if (tx?.type == 'income') {
+          _incomeAccountId = tx?.accountId;
+        } else {
+          _incomeAccountId ??= accountList.isNotEmpty ? accountList.first.id : null;
+        }
+        if (tx?.type == 'expense' && tx?.cardId == null) {
+          _expenseAccountId = tx?.accountId;
+        } else {
+          _expenseAccountId ??= accountList.isNotEmpty ? accountList.first.id : null;
+        }
+        // 지출 카드 모드: 편집 시 거래의 card_id, 신규는 첫 카드.
+        if (tx?.type == 'expense' && tx?.cardId != null) {
+          _selectedCardId = tx?.cardId;
+          _expensePaymentKind = 'card';
+        } else {
+          _selectedCardId ??= cardList.isNotEmpty ? cardList.first.id : null;
+        }
+      });
+    } catch (_) {/* 무시 */}
   }
 
   @override
@@ -85,12 +169,17 @@ class _TxModalState extends State<_TxModal> {
   }
 
   Future<void> _pickDate() async {
-    final initial = DateTime.tryParse(_date.text) ?? DateTime.now();
+    // 일반 거래는 *발생한 거래 입력*이 본질 — 미래 일자 차단.
+    // 정기 반복은 설정 → 정기 거래에서 등록하면 도래일에 자동 추가됨.
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    var initial = DateTime.tryParse(_date.text) ?? today;
+    if (initial.isAfter(today)) initial = today;
     final picked = await showKoDatePicker(
       context: context,
       initial: initial,
       firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
+      lastDate: today,
     );
     if (picked != null) {
       _date.text =
@@ -101,35 +190,101 @@ class _TxModalState extends State<_TxModal> {
 
   Future<void> _save() async {
     final amount = AmountField.parse(_amount);
-    if (_date.text.isEmpty || _major.isEmpty || amount == null || amount == 0) {
-      showToast(context, '날짜, 금액, 카테고리는 필수예요', error: true);
+    if (_date.text.isEmpty || amount == null || amount <= 0) {
+      showToast(
+          context,
+          (amount != null && amount < 0)
+              ? '금액은 양수여야 해요'
+              : '날짜와 금액은 필수예요',
+          error: true);
+      return;
+    }
+    if (_isTransfer) {
+      if (_fromAccountId == null || _toAccountId == null) {
+        showToast(context, '출금·입금 계좌를 선택해주세요', error: true);
+        return;
+      }
+      if (_fromAccountId == _toAccountId) {
+        showToast(context, '같은 계좌끼리는 송금할 수 없어요', error: true);
+        return;
+      }
+    } else if (_major.isEmpty) {
+      showToast(context, '카테고리는 필수예요', error: true);
       return;
     }
     setState(() => _saving = true);
     try {
-      if (_editing) {
-        await Api.instance.updateTransaction(
-          widget.tx!.id,
-          date: _date.text,
-          card: _card.text,
-          merchant: _merchant.text,
-          amount: amount,
-          majorCategory: _major,
-          subCategory: _sub ?? '',
-          memo: _memo.text,
-          isFixed: _isFixed,
-        );
+      if (_isTransfer) {
+        // transfer는 카테고리/가맹점/카드/고정비 없이 from/to만.
+        // major_category는 NOT NULL이라 시스템 라벨 '이체' 하드코드.
+        if (_editing) {
+          await Api.instance.updateTransaction(
+            widget.tx!.id,
+            date: _date.text,
+            amount: amount,
+            majorCategory: '이체',
+            memo: _memo.text,
+            type: 'transfer',
+            fromAccountId: _fromAccountId,
+            toAccountId: _toAccountId,
+          );
+        } else {
+          await Api.instance.createTransaction(
+            date: _date.text,
+            amount: amount,
+            majorCategory: '이체',
+            memo: _memo.text.isEmpty ? null : _memo.text,
+            type: 'transfer',
+            fromAccountId: _fromAccountId,
+            toAccountId: _toAccountId,
+          );
+        }
       } else {
-        await Api.instance.createTransaction(
-          date: _date.text,
-          card: _card.text.isEmpty ? null : _card.text,
-          merchant: _merchant.text.isEmpty ? null : _merchant.text,
-          amount: amount,
-          majorCategory: _major,
-          subCategory: (_sub?.isEmpty ?? true) ? null : _sub,
-          memo: _memo.text.isEmpty ? null : _memo.text,
-          isFixed: _isFixed,
-        );
+        // 지출 카드 모드 검증.
+        if (_type == 'expense' && _expensePaymentKind == 'card') {
+          if (_selectedCardId == null) {
+            showToast(context, '신용카드를 먼저 추가하거나 선택해주세요',
+                error: true);
+            setState(() => _saving = false);
+            return;
+          }
+        }
+        final accountId = _isIncome
+            ? _incomeAccountId
+            : (_expensePaymentKind == 'account' ? _expenseAccountId : null);
+        final cardId = (_type == 'expense' && _expensePaymentKind == 'card')
+            ? _selectedCardId
+            : null;
+        if (_editing) {
+          await Api.instance.updateTransaction(
+            widget.tx!.id,
+            date: _date.text,
+            card: _card.text,
+            merchant: _merchant.text,
+            amount: amount,
+            majorCategory: _major,
+            subCategory: _sub ?? '',
+            memo: _memo.text,
+            isFixed: _isFixed,
+            type: _type,
+            accountId: accountId,
+            cardId: cardId,
+          );
+        } else {
+          await Api.instance.createTransaction(
+            date: _date.text,
+            card: _card.text.isEmpty ? null : _card.text,
+            merchant: _merchant.text.isEmpty ? null : _merchant.text,
+            amount: amount,
+            majorCategory: _major,
+            subCategory: (_sub?.isEmpty ?? true) ? null : _sub,
+            memo: _memo.text.isEmpty ? null : _memo.text,
+            isFixed: _isFixed,
+            type: _type,
+            accountId: accountId,
+            cardId: cardId,
+          );
+        }
       }
       if (!mounted) return;
       showToast(context, _editing ? '수정했어요' : '추가했어요');
@@ -238,11 +393,13 @@ class _TxModalState extends State<_TxModal> {
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
               child: Row(
                 children: [
-                  Text(_editing ? '거래 수정' : '거래 추가',
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                      )),
+                  Text(
+                    _modalTitle(),
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                   const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
@@ -261,92 +418,143 @@ class _TxModalState extends State<_TxModal> {
                     const SizedBox(height: 12),
                     AmountField(controller: _amount),
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(child: _majorDropdown()),
-                        const SizedBox(width: 10),
-                        Expanded(child: _subDropdown(subs)),
+                    if (_isTransfer) ...[
+                      _accountDropdown(
+                        label: '출금 계좌',
+                        value: _fromAccountId,
+                        excludeId: _toAccountId,
+                        onChanged: (v) =>
+                            setState(() => _fromAccountId = v),
+                      ),
+                      const SizedBox(height: 10),
+                      Center(
+                        child: Icon(Icons.arrow_downward,
+                            size: 22, color: AppColors.text3),
+                      ),
+                      const SizedBox(height: 10),
+                      _accountDropdown(
+                        label: '입금 계좌',
+                        value: _toAccountId,
+                        excludeId: _fromAccountId,
+                        onChanged: (v) =>
+                            setState(() => _toAccountId = v),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _memo,
+                        decoration: const InputDecoration(
+                            labelText: '메모', hintText: '선택'),
+                      ),
+                      const SizedBox(height: 12),
+                    ] else ...[
+                      Row(
+                        children: [
+                          Expanded(child: _majorDropdown()),
+                          const SizedBox(width: 10),
+                          Expanded(child: _subDropdown(subs)),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _fieldWithChips(
+                        controller: _merchant,
+                        label: _isIncome ? '받은 곳' : '가맹점',
+                        hint: _isIncome ? '예: 회사, 부모님' : '예: 스타벅스',
+                        options: _merchantSuggestions(),
+                        emptyHint: _major.isEmpty
+                            ? null
+                            : (_isIncome
+                                ? null
+                                : '$_major에 등록된 가맹점이 없어요'),
+                      ),
+                      const SizedBox(height: 12),
+                      if (_isIncome)
+                        _accountDropdown(
+                          label: '입금 계좌',
+                          value: _incomeAccountId,
+                          excludeId: null,
+                          onChanged: (v) =>
+                              setState(() => _incomeAccountId = v),
+                        )
+                      else ...[
+                        _expensePaymentKindToggle(),
+                        const SizedBox(height: 10),
+                        if (_expensePaymentKind == 'account')
+                          _accountDropdown(
+                            label: '출금 계좌',
+                            value: _expenseAccountId,
+                            excludeId: null,
+                            onChanged: (v) =>
+                                setState(() => _expenseAccountId = v),
+                          )
+                        else
+                          _cardDropdown(),
                       ],
-                    ),
-                    const SizedBox(height: 12),
-                    _fieldWithChips(
-                      controller: _merchant,
-                      label: '가맹점',
-                      hint: '예: 스타벅스',
-                      options: _merchantSuggestions(),
-                      emptyHint: _major.isEmpty
-                          ? null
-                          : '$_major에 등록된 가맹점이 없어요',
-                    ),
-                    const SizedBox(height: 12),
-                    _fieldWithChips(
-                      controller: _card,
-                      label: '카드/결제수단',
-                      hint: '예: 체크카드, 현금',
-                      options: widget.suggestions.cards,
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _memo,
-                      decoration: const InputDecoration(
-                          labelText: '메모', hintText: '선택'),
-                    ),
-                    const SizedBox(height: 8),
-                    InkWell(
-                      onTap: () => setState(() {
-                        _isFixed = !_isFixed;
-                      }),
-                      borderRadius: BorderRadius.circular(AppRadius.md),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 8),
-                        child: Row(
-                          children: [
-                            Switch(
-                              value: _isFixed,
-                              onChanged: (v) => setState(() {
-                                _isFixed = v;
-                              }),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  Text('고정비로 표시',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          color: AppColors.text)),
-                                  SizedBox(height: 2),
-                                  Text('월세, 구독료처럼 매달 정해진 지출',
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: AppColors.text3)),
-                                ],
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _memo,
+                        decoration: const InputDecoration(
+                            labelText: '메모', hintText: '선택'),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    if (!_isIncome && !_isTransfer)
+                      InkWell(
+                        onTap: () => setState(() {
+                          _isFixed = !_isFixed;
+                        }),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 8),
+                          child: Row(
+                            children: [
+                              Switch(
+                                value: _isFixed,
+                                onChanged: (v) => setState(() {
+                                  _isFixed = v;
+                                }),
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text('고정비로 표시',
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.text)),
+                                    SizedBox(height: 2),
+                                    Text('월세, 구독료처럼 매달 정해진 지출',
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            color: AppColors.text3)),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
                     if (_editing) ...[
                       const SizedBox(height: 8),
                       Divider(color: AppColors.line2, height: 1),
                       const SizedBox(height: 8),
-                      TextButton.icon(
-                        onPressed: _registerAsFixed,
-                        icon: const Icon(Icons.repeat, size: 18),
-                        label: const Text('정기지출로 등록',
-                            style:
-                                TextStyle(fontWeight: FontWeight.w600)),
-                        style: TextButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 12),
-                          alignment: Alignment.centerLeft,
+                      // 정기지출 등록은 지출 거래에만 (이체·수입 X).
+                      if (!_isIncome && !_isTransfer)
+                        TextButton.icon(
+                          onPressed: _registerAsFixed,
+                          icon: const Icon(Icons.repeat, size: 18),
+                          label: const Text('정기지출로 등록',
+                              style:
+                                  TextStyle(fontWeight: FontWeight.w600)),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                            alignment: Alignment.centerLeft,
+                          ),
                         ),
-                      ),
                       TextButton.icon(
                         onPressed: _delete,
                         icon: const Icon(Icons.delete_outline, size: 18),
@@ -383,6 +591,125 @@ class _TxModalState extends State<_TxModal> {
     );
   }
 
+  String _modalTitle() {
+    if (_isTransfer) return _editing ? '이체 수정' : '내 계좌로 송금';
+    if (_isIncome) return _editing ? '수입 수정' : '수입 추가';
+    return _editing ? '지출 수정' : '지출 추가';
+  }
+
+  /// 지출 결제수단 토글 — [내 계좌 | 신용카드].
+  /// 내 계좌: 체크카드/현금/이체 등 — 즉시 출금 → 출금 계좌 dropdown.
+  /// 신용카드: 자산에 즉시 영향 X (B4에서 정식 처리 예정) → 카드 이름 자유 텍스트.
+  Widget _expensePaymentKindToggle() {
+    Widget item(String value, String label, IconData icon) {
+      final selected = _expensePaymentKind == value;
+      return Expanded(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            if (_expensePaymentKind == value) return;
+            setState(() => _expensePaymentKind = value);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: BoxDecoration(
+              color: selected ? AppColors.surface : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon,
+                    size: 15,
+                    color: selected ? AppColors.text : AppColors.text3),
+                const SizedBox(width: 6),
+                Text(label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: selected ? AppColors.text : AppColors.text3,
+                    )),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: AppColors.surface2,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Row(
+        children: [
+          item('account', '내 계좌', Icons.account_balance_wallet_outlined),
+          item('card', '신용카드', Icons.credit_card),
+        ],
+      ),
+    );
+  }
+
+  Widget _cardDropdown() {
+    if (_cards.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.surface2,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+        ),
+        child: Text(
+          '신용카드 · 자산 탭에서 카드를 먼저 추가해주세요',
+          style: TextStyle(fontSize: 12.5, color: AppColors.text3),
+        ),
+      );
+    }
+    return AppDropdown<int>(
+      label: '신용카드',
+      value: _cards.any((c) => c.id == _selectedCardId)
+          ? _selectedCardId
+          : null,
+      items: [
+        for (final c in _cards)
+          AppDropdownItem(value: c.id, label: c.name),
+      ],
+      onChanged: (v) => setState(() => _selectedCardId = v),
+    );
+  }
+
+  Widget _accountDropdown({
+    required String label,
+    required int? value,
+    required int? excludeId,
+    required ValueChanged<int?> onChanged,
+  }) {
+    if (_accounts.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.surface2,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+        ),
+        child: Text(
+          '$label · 자산 탭에서 계좌를 먼저 추가해주세요',
+          style: TextStyle(fontSize: 12.5, color: AppColors.text3),
+        ),
+      );
+    }
+    final items = _accounts
+        .where((a) => a.id != excludeId)
+        .toList();
+    return AppDropdown<int>(
+      label: label,
+      value: items.any((a) => a.id == value) ? value : null,
+      items: [
+        for (final a in items) AppDropdownItem(value: a.id, label: a.name),
+      ],
+      onChanged: onChanged,
+    );
+  }
+
   Widget _dateField() {
     return GestureDetector(
       onTap: _pickDate,
@@ -403,14 +730,15 @@ class _TxModalState extends State<_TxModal> {
   static const _addSubSentinel = '__add_sub__';
 
   Widget _majorDropdown() {
-    final majors = _cats.majors;
+    final majors = _typedMajors();
     return AppDropdown<String>(
       label: '카테고리',
       value: majors.contains(_major) ? _major : null,
       items: [
         for (final m in majors) AppDropdownItem(value: m, label: m),
-        const AppDropdownItem(
-            value: _addMajorSentinel, label: '+ 새 카테고리 추가'),
+        AppDropdownItem(
+            value: _addMajorSentinel,
+            label: _isIncome ? '+ 새 수입 카테고리 추가' : '+ 새 카테고리 추가'),
       ],
       onChanged: (v) {
         if (v == _addMajorSentinel) {
@@ -454,7 +782,7 @@ class _TxModalState extends State<_TxModal> {
     );
     if (name == null) return;
     try {
-      final created = await Api.instance.createMajor(name);
+      final created = await Api.instance.createMajor(name, type: _type);
       // 카테고리 목록 갱신.
       final fresh = await Api.instance.listCategories();
       if (!mounted) return;

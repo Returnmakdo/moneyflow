@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show ValueNotifier, kIsWeb;
 import 'package:flutter/material.dart' show ThemeMode;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'api/api.dart';
 import 'supabase.dart';
 
 class AuthService {
@@ -71,8 +72,11 @@ class AuthService {
   /// 이벤트가 fire — 그때 userVersion bump해서 listening 화면들 자동 갱신.
   /// main()의 initSupabase 후 한 번 호출.
   static void initListeners() {
-    // 초기 진입 시 user 있으면 테마 동기화.
-    if (currentUser != null) _syncThemeFromUser();
+    // 초기 진입 시 user 있으면 테마 동기화 + 정기 거래 자동 적용.
+    if (currentUser != null) {
+      _syncThemeFromUser();
+      _autoApplyDueFixed();
+    }
 
     sb.auth.onAuthStateChange.listen((data) {
       if (data.event == AuthChangeEvent.userUpdated) {
@@ -83,7 +87,20 @@ class AuthService {
           data.event == AuthChangeEvent.userUpdated) {
         _syncThemeFromUser();
       }
+      // 로그인 직후 — 이번 달 도래분 정기 거래 자동 등록.
+      if (data.event == AuthChangeEvent.signedIn) {
+        _autoApplyDueFixed();
+      }
     });
+  }
+
+  /// 이번 달 도래한 정기 거래를 자동 등록. fire-and-forget.
+  /// dedupe 적용되어 있어 중복 호출 안전.
+  static void _autoApplyDueFixed() {
+    final now = DateTime.now();
+    final ym =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}';
+    Api.instance.applyDueFixedTransactions(ym).catchError((_) => 0);
   }
 
   static Future<void> signIn(String email, String password) async {

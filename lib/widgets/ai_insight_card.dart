@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../api/api.dart';
+import '../screens/shell_screen.dart';
 import '../theme.dart';
 import 'common.dart';
 import 'spending_insight_pages.dart';
@@ -32,12 +33,22 @@ class _AiInsightCardState extends State<AiInsightCard> {
   void initState() {
     super.initState();
     _loadCached();
+    // 분석 탭 다시 누름 → DB 캐시 다시 fetch (옛 in-memory 결과 동기화).
+    ShellTabSignals.insightsTab.addListener(_onTabPressed);
+    // 거래 변경 → ai_insights 트리거 무효화 → fetch.
+    Api.instance.txVersion.addListener(_onTabPressed);
   }
 
   @override
   void dispose() {
+    ShellTabSignals.insightsTab.removeListener(_onTabPressed);
+    Api.instance.txVersion.removeListener(_onTabPressed);
     _pageCtrl.dispose();
     super.dispose();
+  }
+
+  void _onTabPressed() {
+    if (mounted) _loadCached();
   }
 
   Future<void> _loadCached() async {
@@ -46,7 +57,13 @@ class _AiInsightCardState extends State<AiInsightCard> {
           await Api.instance.getCachedSpendingInsight(widget.month);
       if (!mounted) return;
       setState(() {
-        if (cached != null) _cache[widget.month] = cached;
+        // DB 캐시 hit이면 그 결과로 갱신, miss면 옛 in-memory 결과도 비움
+        // (DB가 무효화됐는데 클라이언트가 옛 결과 계속 보여주는 문제 차단).
+        if (cached != null) {
+          _cache[widget.month] = cached;
+        } else {
+          _cache.remove(widget.month);
+        }
         _checkingCache = false;
       });
     } catch (_) {

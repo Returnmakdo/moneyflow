@@ -41,8 +41,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     ),
     _Slide(
       image: 'assets/onboarding/04.png',
-      title: '매달 같은 지출은 자동',
-      body: '구독·월세·통신비, 한 번 등록하면 매달 자동 반영해요.',
+      title: '매달 반복되는 거래는 자동',
+      body: '월세·구독·월급, 한 번 등록하면 매달 자동 반영해요.',
     ),
   ];
 

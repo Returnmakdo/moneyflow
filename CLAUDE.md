@@ -1,6 +1,6 @@
 # 가계부 프로젝트 — 인수인계 문서
 
-토스/뱅크샐러드 톤의 가계부. Supabase(Postgres + Auth + Edge Functions)를 백엔드로 쓰는 Flutter 앱 (Android + Web). 2026-04-29에 웹 SPA(Express + vanilla JS)를 버리고 Flutter로 단일화. 같은 Supabase 백엔드를 Android와 Web 빌드가 공유. 2026-05-01에 AI 분석/온보딩/도움말/CSV 가져오기/다크모드 추가.
+토스/뱅크샐러드 톤의 가계부. Supabase(Postgres + Auth + Edge Functions)를 백엔드로 쓰는 Flutter 앱 (Android + Web). 2026-04-29에 웹 SPA(Express + vanilla JS)를 버리고 Flutter로 단일화. 같은 Supabase 백엔드를 Android와 Web 빌드가 공유. 2026-05-01에 AI 분석/온보딩/도움말/CSV 가져오기/다크모드 추가. 2026-05-07에 자산(계좌) 시스템 + 수입/지출 분리 + 이체 + 정기수입 + 신용카드 시스템(cards 테이블 + 결제일 정산 흐름) 추가 — 5탭 4번이 정기지출에서 *자산*으로 교체됨.
 
 ## 빠른 시작
 
@@ -80,36 +80,49 @@ C:\billionaire\
     │   ├── common.dart             # PageHeader/AppCard/EmptyCard/ProgressTrack/_LogoutButton 등
     │   ├── format.dart             # won/smartWon/ymLabel
     │   ├── category_color.dart     # 8색 CatColor (bg/fg) 팔레트
-    │   ├── kpi_card.dart, budget_card.dart, merchant_item.dart, tx_row.dart
+    │   ├── account_meta.dart       # 계좌 type 5종 라벨/아이콘/색 + AccountBadge
+    │   ├── kpi_card.dart           # KpiAccent enum (expense/income/good/bad/neutral)
+    │   ├── budget_card.dart, merchant_item.dart, tx_row.dart
     │   ├── amount_field.dart       # 콤마 포맷팅 입력
     │   ├── ko_date_picker.dart     # 한국어 월/연 picker
     │   ├── skeleton.dart           # 로딩 스켈레톤
-    │   ├── charts.dart             # CategoryShare, MonthlyTrendBar
+    │   ├── charts.dart             # CategoryShare, MonthlyTrendBar (지출·수입 그룹 막대)
+    │   ├── asset_trend_chart.dart  # 자산 탭 6개월 자산 추이 라인 차트
     │   ├── ai_insight_card.dart    # AI 인사이트 PageView 카드
     │   └── spending_insight_pages.dart  # Summary/Pattern/Budget/Suggestion 페이지 + parseInsight
     └── screens/
         ├── login_screen.dart, reset_password_screen.dart
         ├── onboarding_screen.dart  # 첫 로그인 4장 슬라이드
-        ├── shell_screen.dart       # 5탭 네비
+        ├── shell_screen.dart       # 5탭 네비 (대시보드/거래내역/예산/자산/분석)
         ├── dashboard_screen.dart, transactions_screen.dart, tx_modal.dart
-        ├── budgets_screen.dart, fixed_expenses_screen.dart
+        ├── accounts_screen.dart    # 자산 메인 탭 — 총자산 + 추이차트 + 계좌·카드 CRUD + 결제 등록 시트
+        ├── budgets_screen.dart
         ├── spending_insights_screen.dart  # AI 분석 탭
-        ├── settings_screen.dart    # 메뉴 리스트 (계정/카테고리/import/export/테마/도움말)
+        ├── settings_screen.dart    # 메뉴 리스트 (계정/카테고리/정기 거래/import/export/테마/도움말)
         ├── account_settings_screen.dart, categories_screen.dart
+        ├── fixed_expenses_screen.dart  # /settings/fixed (정기지출/정기수입 탭)
         ├── theme_settings_screen.dart, help_screen.dart, import_screen.dart
 ```
 
 ## 데이터 모델 (Postgres / RLS `auth.uid() = user_id`)
 
-- `transactions` — id, user_id, date(YYYY-MM-DD), card, merchant, amount, major_category, sub_category, memo, is_fixed (0/1), created_at, updated_at
-- `majors` — PK (user_id, major), sort_order
-- `categories` — id, user_id, major, sub, sort_order. UNIQUE (user_id, major, sub)
-- `budgets` — PK (user_id, major), monthly_amount
-- `fixed_expenses` — id, user_id, name, major, sub, amount, card, day_of_month, active, memo, sort_order
+- `transactions` — id, user_id, date(YYYY-MM-DD), card(자유 텍스트 메모), merchant, amount, major_category, sub_category, memo, is_fixed (0/1), **account_id**, **from_account_id·to_account_id**, **card_id**, **type** ('expense'|'income'|'transfer'|'card_payment'), created_at, updated_at. CHECK constraint `tx_account_consistency`:
+  - expense (account 결제): account_id만
+  - expense (card 결제): card_id만 — 자산 영향 X, 카드 부채 +
+  - income: account_id만
+  - transfer: from/to_account_id 둘 다 (서로 다른 계좌)
+  - card_payment: from_account_id(linked) + card_id (결제일 정산 거래)
+- `accounts` — id, user_id, name, type ('checking'|'cash'|'savings'|'investment'|'other'), initial_balance, sort_order, active. UNIQUE (user_id, name). 신용카드는 cards 테이블에 별도.
+- `cards` — id, user_id, name, payment_day(1~31), linked_account_id, statement_close_day(nullable), sort_order, active. UNIQUE (user_id, name). 카드 사용 거래는 자산에 즉시 영향 X, **결제일에 사용자가 청구액 확인 후 자산 탭의 빨간 줄 → 결제 등록 시트**로 card_payment 거래 생성 → linked_account에서 차감.
+- `majors` — PK (user_id, major), sort_order, **type** ('expense'|'income'). 지출/수입 카테고리 분리.
+- `categories` — id, user_id, major, sub, sort_order. UNIQUE (user_id, major, sub). type은 major에서 상속.
+- `budgets` — PK (user_id, major), monthly_amount. **expense major에만 존재** (income은 budget 없음).
+- `fixed_expenses` — id, user_id, name, major, sub, amount, card, day_of_month, active, memo, sort_order, **account_id NOT NULL**, **type** ('expense'|'income'). 정기지출·정기수입 *카탈로그(템플릿)*. 로그인/거래내역 진입 시 `applyDueFixedTransactions`가 도래일 ≤ 오늘 항목을 dedupe + log 체크 후 자동 등록.
+- `fixed_apply_log` — PK (user_id, fixed_id, month). 한 번 적용된 (fixed, month) 페어 기록. 자동 적용 시 이 로그에 있는 페어는 *재적용 X* — 사용자가 거래 의도적으로 삭제해도 다시 등록 안 됨. 사용자가 직접 등록한 매칭 거래도 dedupe와 함께 log 기록 (재추가 차단). 분리 모델의 핵심.
 - `ai_insights` — PK (user_id, month), content (text), generated_at. AI 분석 결과 캐시. **거래 변경 시 트리거(`tx_invalidate_ai_insights`)가 해당 월 캐시 자동 삭제**.
 
 ### 트리거/RPC
-- `seed_default_data_for_new_user` — auth.users INSERT 시 '기타' major + budget 시드
+- `seed_default_data_for_new_user` — auth.users INSERT 시 expense major 10종 + income major 4종(월급·이자·용돈·기타수입) + budgets(expense만) + accounts '기본'(checking) 1개 시드.
 - `tx_invalidate_ai_insights` — transactions INSERT/UPDATE/DELETE 시 ai_insights 자동 무효화 (date 기준 month)
 - `check_email_exists(p_email)` RPC — 회원가입 실시간 중복 체크
 - `delete_my_account()` RPC — 본인 계정 삭제 + ON DELETE CASCADE로 모든 데이터 정리
@@ -118,15 +131,19 @@ C:\billionaire\
 
 `Api.instance` 싱글톤. 내부 `_txCache`로 transactions 캐싱.
 
-- 거래/카테고리/태그/예산/정기지출 CRUD (기존)
-- `getDashboard(month)`, `getSubCategoryStats`, `getSuggestions` — 클라이언트 계산
+- 거래/카테고리/태그/예산/정기지출 CRUD. `createTransaction/updateTransaction`은 `accountId`/`fromAccountId`/`toAccountId`/`type` 인자 받음.
+- `listMajors({type})`, `listCategories({type})`, `listTransactions({type, ...})` — type 인자로 expense/income 필터
+- `createMajor(name, {type='expense'})` — type='expense'면 budgets도 자동 생성, income은 안 생성
+- **계좌 CRUD**: `listAccounts/createAccount/updateAccount/deleteAccount`. `_defaultAccountId()` 헬퍼는 사용자의 '기본' checking 또는 첫 활성 계좌 — 호출부가 `accountId` 명시 안 하면 자동 fallback.
+- `getDashboard(month)` — expense/income 분리 집계. `Dashboard.thisMonthTotal`은 *지출*, `incomeTotal`/`netSaving` 신규.
+- `getSubCategoryStats`, `getSuggestions` — 클라이언트 계산. getSubCategoryStats는 expense만.
 - `getCachedSpendingInsight(month)` — ai_insights 직접 조회 (Edge Function 안 거침, 빠른 표시용)
 - `getSpendingInsight(month, force: bool)` — Edge Function 호출 → AI 분석. force=true면 캐시 우회
-- `importTransactions(rows)` — CSV import. 새 카테고리/태그 자동 등록 + 거래 batch INSERT
-- `exportTransactionsCsv()` — round-trip 가능한 CSV (import 양식과 동일)
+- `importTransactions(rows)` — CSV import. row.type별 majors 자동 등록 (expense/income 분리), default 계좌로 account_id 자동 채움.
+- `exportTransactionsCsv()` — '구분' 컬럼 포함 (round-trip 호환). 단, *수기 import 양식*은 지출/수입 분리 (구분 컬럼 없음) + 옛 양식 자동 호환.
 
 ### Notifier (mutation 알림)
-`txVersion`, `majorsVersion`, `categoriesVersion`, `budgetsVersion`, `fixedVersion` — 변경 시 bump. 화면이 listening해서 자동 reload.
+`txVersion`, `majorsVersion`, `categoriesVersion`, `budgetsVersion`, `fixedVersion`, `accountsVersion`, `cardsVersion` — 변경 시 bump. 화면이 listening해서 자동 reload.
 
 ## Edge Function: `spending-insights`
 
@@ -140,23 +157,79 @@ C:\billionaire\
 
 **시스템 프롬프트 변경 시 `mcp__supabase__deploy_edge_function`로 재배포.** 인라인 코드 대신 파일 통째로 보내는 게 안전.
 
+## 자산 모델 (발생주의 + 신용카드 부채)
+
+가계부 표준 모델을 따름 — 토스/뱅샐과 동일한 계산 구조. 사용자 직관과 회계 정확성 둘 다 만족.
+
+### 핵심 공식
+```
+총자산 = 모든 계좌 잔고 합 − 모든 카드 미정산 합
+
+계좌 잔고 = initial_balance + Σ(해당 계좌 거래 변동)
+카드 미정산 = Σ(카드 사용) − Σ(카드 결제)
+```
+
+### 발생주의 (Accrual basis)
+- **카드 사용 시점**에 즉시 부채 발생 → 총자산 −
+- **카드 결제 시점**(card_payment 거래)엔 통장 잔고 −, 부채 −. 둘이 상쇄되어 *총자산 변동 없음*
+- 결과: 카드 한 번 긁으면 그 순간부터 총자산에 미리 반영됨. 결제일에 통장에서 빠질 때 다시 변하지 않음 — 이중 카운트 방지.
+
+### 두 가지 카드 금액의 의미 차이
+- **사이클 사용액** (자산 탭 카드 row 큰 숫자) = 다음 결제일에 청구될 *이번 사이클*만. UI 표시용. (statement_close_day 기준)
+- **카드 미정산** (총자산 계산용) = 모든 사용 − 모든 결제 = 전체 미상환 부채
+
+옛 사이클이 모두 결제 완료된 상태라면 미정산 = 사이클 사용 + 다음 사이클부터 추가된 사용. 그 외엔 어긋남(과거 미상환분 누적 또는 사이클 안 결제 등). **이 둘이 일치 강제될 필요 없음** — 의미가 다른 두 값.
+
+### 거래 type별 자산/부채 영향
+| type | 계좌 잔고 | 카드 부채 | 총자산 |
+|---|---|---|---|
+| expense (account) | account_id에서 − | 영향 없음 | − |
+| expense (card 사용) | 영향 없음 | card_id 부채 + | − (사용 즉시) |
+| income | account_id에 + | 영향 없음 | + |
+| transfer | from −, to + | 영향 없음 | 변동 없음 |
+| card_payment | from_account_id에서 − | card_id 부채 − | 변동 없음 (자산 이동) |
+
+### 처음 사용자 추천 플로우
+1. **계좌 등록** + 시작 잔액 박기 (현재 통장 잔고 그대로). 자산 탭에서 추가.
+2. **카드 등록** — 결제일·마감일·연동 계좌 입력. 자산 탭의 카드 섹션.
+3. **거래 입력 시작** — 지출 시 [내 계좌 / 신용카드] 토글로 결제수단 명시. 카드면 어느 카드인지 선택.
+4. **결제일 도래** → 자산 탭 카드 row의 빨간 줄(D-day 지남) → "결제 등록"에서 명세서 청구액 확인 후 등록 → linked_account에서 차감.
+5. **AI CSV import**(`/settings/import/ai`) — 카드사 명세서 통째로 넣으면 자동 매핑.
+
+### 흔한 실수와 대응
+- **잔여할부**: 카드사가 매월 청구하는 할부금. 정기 거래로 등록(결제수단 [신용카드] + day_of_month는 *마감일* 또는 그 이전). day_of_month=결제일로 두면 사이클 다음 달로 넘어가서 안 잡힘.
+- **친구 1/N 정산**: 카드 사용 거래는 *명세서대로 전체 금액*으로 등록. 친구한테 받은 돈은 별도 income으로 추가. 그래야 카드 청구액·자산 흐름 모두 정확.
+- **시스템 시작 시 누락된 과거 거래**: 1월부터 데이터를 다 입력 못 했다면 1/1자 "시작 잔고 보정" income/expense로 net 0 만들어서 계좌 잔고 정상화. 또는 initial_balance를 직접 조정.
+- **카드 결제 거래만 삭제 시 미정산 폭증**: 옛 사이클 정리할 땐 *사용 + 결제 짝 맞춰* 같이 삭제. 한쪽만 지우면 부채 잘못 잡힘.
+
 ## 화면 구성 (5탭 + 사이드 라우트)
 
 ### 메인 탭 (StatefulShellRoute)
-1. **대시보드** `/dashboard` — KPI 4장, 카테고리 비율, 태그 TOP 10, 6개월 추이
-2. **거래내역** `/transactions` — 월/카테고리/검색/금액범위/정렬 필터, FAB 추가, 거래 모달에서 카테고리·태그 인라인 추가, 정기지출 미등록 배너 (이번 달만 표시)
-3. **예산** `/budgets` — 카테고리별 변동비 진행률 + 입력 + 저장
-4. **정기지출** `/fixed` — 카탈로그 CRUD. 수정 시 이번 달 매칭 거래도 동기화 (과거 달은 보존)
-5. **분석** `/insights` — AI 인사이트 + 4페이지 PageView (요약/패턴/예산/제안) + 데이터 시각화
+1. **대시보드** `/dashboard` — KPI 4장 (지출/수입/순저축/일평균), 카테고리 비율(expense), 태그 TOP, 6개월 추이(지출·수입 그룹 막대)
+2. **거래내역** `/transactions` — [전체/지출/수입] chip 필터 + 월/카테고리/검색/금액범위/정렬, FAB → [지출][수입] 큰 버튼 + 송금 + 명세서. 합계는 transfer 제외.
+3. **예산** `/budgets` — 카테고리별 변동비 진행률 + 입력 + 저장 (expense만)
+4. **자산** `/accounts` — 상단 총자산 카드(계좌 합 − 카드 부채) + 6개월 자산 추이 라인 차트. 계좌 섹션(잔고 = initial_balance + Σ거래) + 카드 섹션(이번 달 사용액·결제 D-일·연동 계좌). 결제일 지났는데 미정산이면 빨간 줄 → 결제 등록 시트(자동 합계 + 사용자 수정 + 더블 컨펌). 카드 사용 거래는 자산 영향 X, card_payment 거래만 linked_account에서 차감.
+5. **분석** `/insights` — AI 인사이트 + 4페이지 PageView. spending-insights Edge Function이 expense만 분석.
 
 ### 설정 sub 라우트 (`/settings/...`)
 - `/settings` — 메뉴 리스트
 - `/settings/account` — 이름/비밀번호/회원탈퇴
-- `/settings/categories` — 카테고리·태그 CRUD
-- `/settings/import` — CSV 일괄 등록 (템플릿 다운로드 + 파일 선택 + 미리보기)
+- `/settings/categories` — 지출/수입 탭 + 카테고리·태그 CRUD
+- `/settings/fixed` — 정기지출 카탈로그 (예전엔 메인 탭이었으나 자산 탭에 자리 양보)
+- `/settings/import` — CSV 일괄 등록 (지출/수입 토글 + 양식 자동 판별)
+- `/settings/import/ai` — AI CSV 자동 분류 (카드사 명세서 → 카테고리 매핑)
 - `/settings/theme` — 시스템/라이트/다크
 - `/settings/help` — 온보딩 다시 보기 + 화면별 가이드
+- `/settings/changelog` — 업데이트 소식
 - `/onboarding` — 첫 로그인 자동 진입. `?from=help`면 도움말에서 닫기
+
+### 거래 모달 (showTxModal)
+- `initialType` 인자 ('expense'|'income'|'transfer') — FAB 시트에서 명시 진입. 모달 안에 type 토글 *없음*.
+- 수입 모드: 가맹점→'받은 곳', 카드 자리에 입금 계좌 dropdown(account_id 명시), 고정비 토글 hide
+- 이체 모드: 카테고리/가맹점/카드 모두 hide. 출금↓입금 dropdown(같은 계좌 차단). major_category='이체' 자동.
+- 지출 모드 결제수단 토글: [내 계좌 / 신용카드]
+  - 내 계좌: 출금 계좌 dropdown — account_id 명시
+  - 신용카드: cards dropdown(card_id 명시), 자산 영향 X. 카드 0개면 안내.
 
 ## 라우팅 패턴 (중요)
 
@@ -215,11 +288,16 @@ AppRadius.sm:10 md:14 lg:18 xl:22
 
 ## 다음 단계 후보
 
-- **알림** (예산 임박 / 정기지출) — 작업 작음, 임팩트 큼
-- **APK 빌드 + 안드 SMS 파싱** — 토스/뱅샐 못 하는 영역. 결제 SMS 자동 파싱 → 거래 자동 추가
-- **iOS** — Mac 빌드 환경 필요
-- **오프라인 캐시** — `drift`로 로컬 캐시 + 백그라운드 sync
-- **AI CSV 자동 분류** — 카드사 CSV의 가맹점들을 Claude한테 넘겨 카테고리 자동 분류 (현재는 우리 양식만 import)
+### 정합성·UX 보강 (작업 작음)
+- **계좌 active 처리 일관화** — 자산 탭의 토글 IconButton은 제거됐는데 `_AccountEditor`에 active 체크박스가 없어서 한 번 비활성된 계좌를 다시 활성화할 방법이 없음. 옵션 A: editor에 토글 추가, B: `Account.active` 필드 자체 제거(deletion만 운영). 둘 중 결정.
+- **카드 결제계좌 변경 시 동작 (확정 — 변경 X)**: `updateCard`로 linked_account 바꿔도 기존 `card_payment.from_account_id`는 *그대로 둠*. 옛 결제는 실제로 A 통장에서 빠진 사실이라 소급 이전하면 과거 자산 흐름이 거짓이 됨. 앞으로의 결제만 새 계좌에서 빠짐. 데이터 보정이 필요하면 거래별 수동 편집(거래 모달)으로. *자동 이전 다이얼로그 추가하지 말 것*.
+- ~~**잔여할부 등록 시 day_of_month 인라인 가이드**~~ — 완료. 정기 거래 등록 신용카드 모드에서 카드 선택 시 마감일/결제일 안내 박스 노출.
+
+### 정식 기능
+- **알림** (예산 임박 / 정기 거래 미등록) — `flutter_local_notifications`. 작업 작음, 매일 가치 큼.
+- **APK 빌드 + 안드 SMS 파싱** — 토스/뱅샐 못 하는 영역. 결제 SMS 자동 파싱 → 거래 자동 추가.
+- **iOS 실기기/스토어** — 시뮬만 돌아가는 상태. Mac + Apple Developer 계정 필요.
+- **오프라인 캐시** — `drift`로 로컬 캐시 + 백그라운드 sync.
 
 ## 작업 시 주의
 
@@ -228,7 +306,9 @@ AppRadius.sm:10 md:14 lg:18 xl:22
 - **anon key 노출 OK** — RLS가 보호. service_role 키는 절대 클라이언트에 두지 말 것.
 - **사용자 추가/삭제**는 Supabase 대시보드 → Authentication → Users.
 - **화면 변경 후 `flutter analyze` 0 issues 유지**.
-- **CSV 양식**은 export/import 동일: `날짜,금액,카테고리,가맹점,카드/결제수단,태그,메모,고정비` (필수 3개 앞쪽).
+- **CSV 양식**:
+  - export: `날짜,구분,금액,카테고리,가맹점,카드/결제수단,태그,메모,고정비` ('구분'은 지출/수입/이체)
+  - 수기 import 템플릿: 지출/수입 분리 — 양식 자동 판별 (헤더에 '구분' 있으면 옛 호환, '받은 곳' 있으면 income, 그 외 expense). 토글로 어떤 템플릿 받을지 선택.
 - **테스트 데이터 입력**은 Supabase MCP `execute_sql`로 직접 INSERT (한글 cp949 문제 회피).
 
 ### 업데이트 내역(changelog) 자동 갱신

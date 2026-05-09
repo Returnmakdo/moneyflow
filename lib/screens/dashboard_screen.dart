@@ -158,7 +158,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               PageHeader(
                 title: '${AuthService.displayName()}님 어서오세요',
-                subtitle: '한눈에 보는 이번 달 지출',
+                subtitle: '한눈에 보는 이번 달 흐름',
                 actions: [
                   MonthSwitcher(
                     label: MediaQuery.sizeOf(context).width >= 700
@@ -305,39 +305,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _kpiGrid(Dashboard d) {
-    final delta = d.thisMonthTotal - d.prevMonthTotal;
-    final pct = d.prevMonthTotal > 0
-        ? (delta / d.prevMonthTotal * 100).round()
-        : null;
-    final deltaText = d.prevMonthTotal == 0
+    // 지출 전월 대비
+    final expDelta = d.thisMonthTotal - d.prevMonthTotal;
+    final expDeltaText = d.prevMonthTotal == 0
         ? '전달 데이터 없음'
-        : '전달 대비 ${delta >= 0 ? '+' : ''}${smartWon(delta)}원'
-            '${pct != null ? ' (${pct >= 0 ? '+' : ''}$pct%)' : ''}';
+        : '전달 대비 ${expDelta >= 0 ? '+' : ''}${smartWon(expDelta)}원';
     final fixedText =
         '고정 ${smartWon(d.fixedTotal)}원 · 변동 ${smartWon(d.variableTotal)}원';
+
+    // 수입 전월 대비
+    final incDelta = d.incomeTotal - d.prevIncomeTotal;
+    final incDeltaText = d.prevIncomeTotal == 0
+        ? (d.incomeTotal == 0 ? '아직 수입 없음' : '전달 데이터 없음')
+        : '전달 대비 ${incDelta >= 0 ? '+' : ''}${smartWon(incDelta)}원';
+
+    // 순 저축 = 수입 - 지출
+    final net = d.netSaving;
+    final netLabel = net >= 0 ? '순 저축' : '적자';
+    final netAccent = d.incomeTotal == 0 && d.thisMonthTotal == 0
+        ? KpiAccent.neutral
+        : (net >= 0 ? KpiAccent.good : KpiAccent.bad);
+    final netDelta = d.incomeTotal == 0
+        ? '수입을 등록하면 흑자가 보여요'
+        : (net >= 0
+            ? '수입 ${smartWon(d.incomeTotal)}원 − 지출 ${smartWon(d.thisMonthTotal)}원'
+            : '지출이 수입보다 ${smartWon(net.abs())}원 많아요');
 
     final cards = [
       KpiCard(
         label: '이번 달 지출',
         value: smartWon(d.thisMonthTotal),
-        primary: true,
-        delta: deltaText,
+        accent: KpiAccent.expense,
+        delta: expDeltaText,
         deltaExtra: fixedText,
       ),
       KpiCard(
-        label: '지난달',
-        value: smartWon(d.prevMonthTotal),
-        delta: ymLabel(shiftYm(d.month, -1)),
+        label: '이번 달 수입',
+        value: smartWon(d.incomeTotal),
+        accent: KpiAccent.income,
+        delta: incDeltaText,
       ),
       KpiCard(
-        label: '일평균',
+        label: netLabel,
+        value: smartWon(net.abs()),
+        accent: netAccent,
+        delta: netDelta,
+      ),
+      KpiCard(
+        label: '일평균 지출',
         value: smartWon(d.dailyAvg),
+        accent: KpiAccent.neutral,
         delta: '이번 달 누적 기준',
-      ),
-      KpiCard(
-        label: '연 누적',
-        value: smartWon(d.yearTotal),
-        delta: '${d.year}년 거래 합계',
       ),
     ];
 

@@ -30,24 +30,33 @@ class _ImportScreenState extends State<ImportScreen> {
   String? _fileName;
   List<String> _errors = [];
   bool _importing = false;
+  // 'expense' | 'income' — 토글로 결정. 템플릿/안내/파싱 모두 이 값에 분기.
+  String _type = 'expense';
 
-  // 필수 컬럼(날짜/금액/카테고리)을 앞에 모아서 사용자가 한눈에 알아보게.
-  static const _csvHeader =
+  // 양식별 헤더 — '구분' 컬럼 없음. 토글로 어떤 양식인지 결정.
+  static const _expenseHeader =
       '날짜,금액,카테고리,가맹점,카드/결제수단,태그,메모,고정비';
-  static const _csvTemplate = '$_csvHeader\n'
+  static const _expenseTemplate = '$_expenseHeader\n'
       '2026-05-01,5800,식비/카페,스타벅스,체크카드,카페,,아니오\n'
       '2026-05-01,18500,식비/카페,쿠팡이츠,,배달,점심,아니오\n'
       '2026-05-01,700000,주거,월세,자동이체,월세,,예\n';
 
+  static const _incomeHeader =
+      '날짜,금액,카테고리,받은 곳,입금 계좌,태그,메모';
+  static const _incomeTemplate = '$_incomeHeader\n'
+      '2026-05-25,3500000,월급,회사,신한 입출금,정기,5월분\n'
+      '2026-05-10,50000,용돈,부모님,현금,,\n';
+
   static const _webUrl = 'https://billionaire-chi.vercel.app/settings/import';
 
+  bool get _isIncome => _type == 'income';
+
   Future<void> _downloadTemplate() async {
-    // 반환 true = share dialog로 처리됨 (사용자가 시트 봤으니 toast 불필요).
-    // false = 브라우저 다운로드 (사용자에게 명시적으로 알림).
-    final shared = await triggerCsvDownload(
-      _csvTemplate,
-      '가계부_가져오기_템플릿.csv',
-    );
+    final template = _isIncome ? _incomeTemplate : _expenseTemplate;
+    final fileName = _isIncome
+        ? '가계부_수입_템플릿.csv'
+        : '가계부_지출_템플릿.csv';
+    final shared = await triggerCsvDownload(template, fileName);
     if (!mounted) return;
     if (!shared) showToast(context, '템플릿을 다운로드했어요');
   }
@@ -103,10 +112,31 @@ class _ImportScreenState extends State<ImportScreen> {
     if (lines.isEmpty) {
       return const _ParseResult(rows: [], errors: ['파일이 비어있어요']);
     }
+    // 양식 자동 판별 — 헤더 보고 expense / income / 옛 호환 결정.
+    // - '구분' 컬럼 → 옛 양식(export 호환), 각 row의 구분 값으로 type
+    // - '받은 곳' → income 양식, 모든 row income
+    // - 그 외 → expense 양식
+    final headerFields =
+        _parseCsvLine(lines.first).map((s) => s.trim()).toList();
+    final hasKind = headerFields.contains('구분');
+    final isIncomeTemplate =
+        !hasKind && headerFields.contains('받은 곳');
     final dataLines = lines.skip(1).where((l) => l.trim().isNotEmpty).toList();
     if (dataLines.isEmpty) {
       return const _ParseResult(rows: [], errors: ['데이터 행이 없어요']);
     }
+
+    // 컬럼 인덱스 매핑.
+    final int iDate = 0;
+    final int? iKind = hasKind ? 1 : null;
+    final int iAmount = hasKind ? 2 : 1;
+    final int iMajor = hasKind ? 3 : 2;
+    final int iMerchant = hasKind ? 4 : 3;
+    final int iCard = hasKind ? 5 : 4;
+    final int iSub = hasKind ? 6 : 5;
+    final int iMemo = hasKind ? 7 : 6;
+    // income 양식엔 고정비 컬럼 없음.
+    final int? iFixed = isIncomeTemplate ? null : (hasKind ? 8 : 7);
 
     final rows = <ImportRow>[];
     final errors = <String>[];
@@ -114,36 +144,51 @@ class _ImportScreenState extends State<ImportScreen> {
       final lineNo = i + 2; // 헤더가 1행
       try {
         final fields = _parseCsvLine(dataLines[i]);
-        // 필수 컬럼 3개 (날짜/금액/카테고리)
-        if (fields.length < 3) {
+        final minLen = hasKind ? 4 : 3;
+        if (fields.length < minLen) {
           errors.add('$lineNo행: 컬럼이 부족해요 (날짜·금액·카테고리 필수)');
           continue;
         }
-        final date = _normalizeDate(fields[0]);
+        final date = _normalizeDate(fields[iDate]);
         if (date == null) {
           errors.add('$lineNo행: 날짜 형식이 잘못됐어요 (예: 2026-05-01)');
           continue;
         }
-        final amountStr = _get(fields, 1);
+        // type 결정 — 옛 양식은 row별 '구분', 새 양식은 헤더로 결정.
+        String type = isIncomeTemplate ? 'income' : 'expense';
+        if (iKind != null) {
+          final k = _get(fields, iKind).trim();
+          if (k == '수입' || k.toLowerCase() == 'income') {
+            type = 'income';
+          } else if (k == '이체' || k.toLowerCase() == 'transfer') {
+            errors.add('$lineNo행: 이체 거래는 아직 지원 안 해요 (지출로 등록됨)');
+          }
+        }
+        final amountStr = _get(fields, iAmount);
         final amount = _parseAmount(amountStr);
         if (amount == null || amount <= 0) {
           errors.add('$lineNo행: 금액이 잘못됐어요 ("$amountStr")');
           continue;
         }
-        final major = _get(fields, 2).trim();
+        final major = _get(fields, iMajor).trim();
         if (major.isEmpty) {
           errors.add('$lineNo행: 카테고리는 필수예요');
           continue;
         }
-        final merchant = _emptyToNull(_get(fields, 3));
-        final card = _emptyToNull(_get(fields, 4));
-        final sub = _emptyToNull(_get(fields, 5));
-        final memo = _emptyToNull(_get(fields, 6));
-        final fixedStr = _get(fields, 7).trim();
-        final isFixed = fixedStr == '예' ||
-            fixedStr.toLowerCase() == 'y' ||
-            fixedStr.toLowerCase() == 'true' ||
-            fixedStr == '1';
+        final merchant = _emptyToNull(_get(fields, iMerchant));
+        final card = _emptyToNull(_get(fields, iCard));
+        final sub = _emptyToNull(_get(fields, iSub));
+        final memo = _emptyToNull(_get(fields, iMemo));
+        var isFixed = false;
+        if (iFixed != null) {
+          final fixedStr = _get(fields, iFixed).trim();
+          isFixed = fixedStr == '예' ||
+              fixedStr.toLowerCase() == 'y' ||
+              fixedStr.toLowerCase() == 'true' ||
+              fixedStr == '1';
+        }
+        // 수입 거래엔 고정비 적용 안 함 (정기수입은 다음 plan).
+        if (type == 'income') isFixed = false;
 
         rows.add(ImportRow(
           date: date,
@@ -154,6 +199,7 @@ class _ImportScreenState extends State<ImportScreen> {
           subCategory: sub,
           memo: memo,
           isFixed: isFixed,
+          type: type,
         ));
       } catch (e) {
         errors.add('$lineNo행: $e');
@@ -287,9 +333,12 @@ class _ImportScreenState extends State<ImportScreen> {
               ),
             ),
             const SizedBox(height: 4),
+            // 어떤 거래를 가져올지 먼저 선택 — 템플릿/안내가 토글 따라 분기.
+            _typeToggle(),
+            const SizedBox(height: 12),
             _stepCard(
               step: '1',
-              title: '템플릿 받기',
+              title: _isIncome ? '수입 템플릿 받기' : '지출 템플릿 받기',
               body: !isMobileEnv()
                   ? '빈 양식 + 예시가 들어있는 CSV 파일을 받으세요. 엑셀에서 열어 거래 내역을 채우면 돼요.'
                   : '템플릿 CSV를 다른 앱(메일·카카오톡·구글드라이브 등)으로 공유해서 PC에서 받을 수 있어요. 또는 아래 PC 웹 URL로 직접 받으세요.',
@@ -337,6 +386,67 @@ class _ImportScreenState extends State<ImportScreen> {
             _formatGuide(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _typeToggle() {
+    Widget tab(String value, String label) {
+      final selected = _type == value;
+      final isIncomeTab = value == 'income';
+      return Expanded(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            if (_type == value) return;
+            setState(() {
+              _type = value;
+              // 양식이 바뀌니 미리보기 초기화.
+              _rows = null;
+              _fileName = null;
+              _errors = const [];
+            });
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            decoration: BoxDecoration(
+              color: selected
+                  ? (isIncomeTab
+                      ? AppColors.incomeBg
+                      : AppColors.surface)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+            ),
+            child: Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: selected
+                      ? (isIncomeTab
+                          ? AppColors.incomeText
+                          : AppColors.text)
+                      : AppColors.text3,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: AppColors.surface2,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Row(
+        children: [
+          tab('expense', '지출 가져오기'),
+          tab('income', '수입 가져오기'),
+        ],
       ),
     );
   }
@@ -690,7 +800,13 @@ class _ImportScreenState extends State<ImportScreen> {
           const SizedBox(height: 6),
           _guideRow('날짜', 'YYYY-MM-DD (예: 2026-05-01)', required: true),
           _guideRow('금액', '숫자, 콤마/원 OK', required: true),
-          _guideRow('카테고리', '새 카테고리면 자동 추가됨', required: true),
+          _guideRow(
+            '카테고리',
+            _isIncome
+                ? '월급·이자 등. 새 카테고리면 자동 추가됨'
+                : '새 카테고리면 자동 추가됨',
+            required: true,
+          ),
           const SizedBox(height: 14),
           Text(
             '선택',
@@ -702,11 +818,17 @@ class _ImportScreenState extends State<ImportScreen> {
             ),
           ),
           const SizedBox(height: 6),
-          _guideRow('가맹점', '거래처 이름'),
-          _guideRow('카드/결제수단', '예: 체크카드, 자동이체'),
+          if (_isIncome) ...[
+            _guideRow('받은 곳', '거래처 이름 (예: 회사, 부모님)'),
+            _guideRow('입금 계좌', '메모용. 예: 신한 입출금'),
+          ] else ...[
+            _guideRow('가맹점', '거래처 이름'),
+            _guideRow('카드/결제수단', '예: 체크카드, 자동이체'),
+          ],
           _guideRow('태그', '카테고리 하위, 새 태그면 자동 추가됨'),
           _guideRow('메모', '자유 텍스트'),
-          _guideRow('고정비', '"예" 또는 "아니오" (기본 아니오)'),
+          if (!_isIncome)
+            _guideRow('고정비', '"예" 또는 "아니오" (기본 아니오)'),
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(10),

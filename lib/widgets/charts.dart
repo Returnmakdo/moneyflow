@@ -276,7 +276,8 @@ class _ShareRow extends StatelessWidget {
   }
 }
 
-/// 최근 N개월 추이 막대 차트 (fl_chart 기반).
+/// 최근 N개월 추이 — 지출(검정 강조) + 수입(파랑) 그룹 막대.
+/// 수입이 모든 달에 0이면 단일 막대처럼 보여서 자연스러움.
 class MonthlyTrendBar extends StatelessWidget {
   const MonthlyTrendBar({
     super.key,
@@ -286,106 +287,184 @@ class MonthlyTrendBar extends StatelessWidget {
   final List<TrendPoint> trend;
   final String currentMonth;
 
+  static const _expenseColor = Color(0xFF111827); // 거의 검정 (지출 강조)
+  static const _expenseDim = Color(0xFFD1D5DB); // 회색 (이번 달 외)
+  static const _incomeColor = Color(0xFF1D4ED8); // 파랑
+  static const _incomeDim = Color(0xFFBFDBFE);
+
+  bool get _hasIncome => trend.any((t) => t.incomeTotal > 0);
+
   @override
   Widget build(BuildContext context) {
     if (trend.isEmpty) return const SizedBox.shrink();
-    final maxV = trend.fold<int>(1, (m, t) => t.total > m ? t.total : m);
-    return SizedBox(
-      height: 180,
-      child: BarChart(
-        BarChartData(
-          alignment: BarChartAlignment.spaceAround,
-          maxY: maxV * 1.2,
-          minY: 0,
-          gridData: const FlGridData(show: false),
-          borderData: FlBorderData(show: false),
-          barTouchData: BarTouchData(
-            enabled: true,
-            touchTooltipData: BarTouchTooltipData(
-              // 라이트/다크 어디서든 흰 글자가 잘 보이도록 진한 네이비 고정.
-              getTooltipColor: (_) => const Color(0xFF191F28),
-              tooltipPadding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              tooltipMargin: 6,
-              getTooltipItem: (group, gx, rod, ry) {
-                final t = trend[group.x];
-                final mLabel = '${int.parse(t.ym.substring(5, 7))}월';
-                return BarTooltipItem(
-                  '$mLabel\n',
-                  const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  children: [
-                    TextSpan(
-                      text: '${won(t.total)}원',
-                      style: const TextStyle(
+    final maxV = trend.fold<int>(1, (m, t) {
+      final v = t.expenseTotal > t.incomeTotal ? t.expenseTotal : t.incomeTotal;
+      return v > m ? v : m;
+    });
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_hasIncome) ...[
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
+            child: Row(
+              children: [
+                _LegendDot(color: _expenseColor, label: '지출'),
+                const SizedBox(width: 14),
+                _LegendDot(color: _incomeColor, label: '수입'),
+              ],
+            ),
+          ),
+        ],
+        SizedBox(
+          height: 180,
+          child: BarChart(
+            BarChartData(
+              alignment: BarChartAlignment.spaceAround,
+              maxY: maxV * 1.2,
+              minY: 0,
+              gridData: const FlGridData(show: false),
+              borderData: FlBorderData(show: false),
+              barTouchData: BarTouchData(
+                enabled: true,
+                touchTooltipData: BarTouchTooltipData(
+                  getTooltipColor: (_) => const Color(0xFF191F28),
+                  tooltipPadding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
+                  tooltipMargin: 6,
+                  getTooltipItem: (group, gx, rod, ry) {
+                    final t = trend[group.x];
+                    final mLabel = '${int.parse(t.ym.substring(5, 7))}월';
+                    final lines = <TextSpan>[
+                      TextSpan(
+                        text: '지출 ${won(t.expenseTotal)}원',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ];
+                    if (t.incomeTotal > 0) {
+                      lines.add(TextSpan(
+                        text: '\n수입 ${won(t.incomeTotal)}원',
+                        style: const TextStyle(
+                          color: Color(0xFFBFDBFE),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ));
+                    }
+                    return BarTooltipItem(
+                      '$mLabel\n',
+                      const TextStyle(
                         color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
                       ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-          titlesData: FlTitlesData(
-            leftTitles: const AxisTitles(
-                sideTitles: SideTitles(showTitles: false)),
-            rightTitles: const AxisTitles(
-                sideTitles: SideTitles(showTitles: false)),
-            topTitles: const AxisTitles(
-                sideTitles: SideTitles(showTitles: false)),
-            bottomTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 26,
-                getTitlesWidget: (value, meta) {
-                  final i = value.toInt();
-                  if (i < 0 || i >= trend.length) return const SizedBox();
-                  final t = trend[i];
-                  final isCurrent = t.ym == currentMonth;
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      '${int.parse(t.ym.substring(5, 7))}월',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: isCurrent
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                        color: isCurrent
-                            ? AppColors.primary
-                            : AppColors.text3,
-                      ),
-                    ),
-                  );
-                },
+                      children: lines,
+                    );
+                  },
+                ),
               ),
-            ),
-          ),
-          barGroups: [
-            for (var i = 0; i < trend.length; i++)
-              BarChartGroupData(
-                x: i,
-                barRods: [
-                  BarChartRodData(
-                    toY: trend[i].total.toDouble(),
-                    width: 18,
-                    color: trend[i].ym == currentMonth
-                        ? AppColors.primary
-                        : AppColors.primaryWeak,
-                    borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(6),
-                    ),
+              titlesData: FlTitlesData(
+                leftTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    interval: 1,
+                    reservedSize: 26,
+                    getTitlesWidget: (value, meta) {
+                      if ((value - value.roundToDouble()).abs() > 0.001) {
+                        return const SizedBox();
+                      }
+                      final i = value.toInt();
+                      if (i < 0 || i >= trend.length) return const SizedBox();
+                      final t = trend[i];
+                      final isCurrent = t.ym == currentMonth;
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          '${int.parse(t.ym.substring(5, 7))}월',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: isCurrent
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            color: isCurrent
+                                ? AppColors.primary
+                                : AppColors.text3,
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                ],
+                ),
               ),
-          ],
+              barGroups: [
+                for (var i = 0; i < trend.length; i++)
+                  BarChartGroupData(
+                    x: i,
+                    barsSpace: 4,
+                    barRods: [
+                      BarChartRodData(
+                        toY: trend[i].expenseTotal.toDouble(),
+                        width: _hasIncome ? 10 : 18,
+                        color: trend[i].ym == currentMonth
+                            ? _expenseColor
+                            : _expenseDim,
+                        borderRadius:
+                            const BorderRadius.vertical(top: Radius.circular(4)),
+                      ),
+                      if (_hasIncome)
+                        BarChartRodData(
+                          toY: trend[i].incomeTotal.toDouble(),
+                          width: 10,
+                          color: trend[i].ym == currentMonth
+                              ? _incomeColor
+                              : _incomeDim,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(4)),
+                        ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
         ),
-      ),
+      ],
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(label,
+            style: TextStyle(
+              fontSize: 11.5,
+              color: AppColors.text3,
+              fontWeight: FontWeight.w600,
+            )),
+      ],
     );
   }
 }

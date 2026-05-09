@@ -25,6 +25,10 @@ class TransactionsScreen extends StatefulWidget {
     this.initialSubIsNull = false,
     this.initialQ,
     this.initialFixed,
+    this.initialDateFrom,
+    this.initialDateTo,
+    this.initialCardId,
+    this.initialCardName,
   });
 
   final String? initialMonth;
@@ -33,6 +37,10 @@ class TransactionsScreen extends StatefulWidget {
   final bool initialSubIsNull;
   final String? initialQ;
   final String? initialFixed; // '', 'true', 'false'
+  final String? initialDateFrom; // YYYY-MM-DD
+  final String? initialDateTo;
+  final int? initialCardId;
+  final String? initialCardName; // 배지 표시용 (필수 아님)
 
   @override
   State<TransactionsScreen> createState() => _TransactionsScreenState();
@@ -54,6 +62,14 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   bool _subIsNull = false;
   String _q = '';
   String _fixed = ''; // '', 'true', 'false'
+  String _type = ''; // '', 'expense', 'income'
+  // 임의 기간/카드/계좌 필터 — 활성 시 SelectedMonth 무시(기간만).
+  String? _dateFrom;
+  String? _dateTo;
+  int? _cardFilterId;
+  String? _cardFilterName;
+  int? _accountFilterId;
+  String? _accountFilterName;
 
   String get _month => SelectedMonth.value.value;
   int? _minAmount;
@@ -62,8 +78,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
   CategoriesData? _cats;
   Suggestions? _suggestions;
-  PendingFixed? _pending;
   Set<String> _recurringKeys = const {};
+  Map<int, String> _accountsById = const {};
+  Map<int, String> _cardsById = const {};
   List<Tx>? _txs;
   Object? _txError;
   bool _isFirstUser = false;
@@ -77,6 +94,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     Api.instance.majorsVersion,
     Api.instance.categoriesVersion,
     Api.instance.fixedVersion,
+    Api.instance.accountsVersion,
+    Api.instance.cardsVersion,
   ]);
   bool _reloadScheduled = false;
 
@@ -91,6 +110,10 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     _subIsNull = widget.initialSubIsNull;
     _q = widget.initialQ ?? '';
     _fixed = widget.initialFixed ?? '';
+    _dateFrom = widget.initialDateFrom;
+    _dateTo = widget.initialDateTo;
+    _cardFilterId = widget.initialCardId;
+    _cardFilterName = widget.initialCardName;
     _qCtrl = TextEditingController(text: _q);
     _apiListenable.addListener(_onApiChanged);
     SelectedMonth.value.addListener(_onMonthChanged);
@@ -123,7 +146,17 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       _fixed.isNotEmpty ||
       _minAmount != null ||
       _maxAmount != null ||
+      _dateFrom != null ||
+      _dateTo != null ||
+      _cardFilterId != null ||
+      _accountFilterId != null ||
       _sort != _TxSort.dateDesc;
+
+  bool get _hasRangeOrCard =>
+      _dateFrom != null ||
+      _dateTo != null ||
+      _cardFilterId != null ||
+      _accountFilterId != null;
 
   @override
   void didUpdateWidget(TransactionsScreen oldWidget) {
@@ -135,7 +168,10 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         widget.initialSub != oldWidget.initialSub ||
         widget.initialSubIsNull != oldWidget.initialSubIsNull ||
         widget.initialQ != oldWidget.initialQ ||
-        widget.initialFixed != oldWidget.initialFixed;
+        widget.initialFixed != oldWidget.initialFixed ||
+        widget.initialDateFrom != oldWidget.initialDateFrom ||
+        widget.initialDateTo != oldWidget.initialDateTo ||
+        widget.initialCardId != oldWidget.initialCardId;
     if (!changed) return;
     if (widget.initialMonth != null && widget.initialMonth!.isNotEmpty) {
       SelectedMonth.value.value = widget.initialMonth!;
@@ -146,6 +182,10 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       _subIsNull = widget.initialSubIsNull;
       _q = widget.initialQ ?? '';
       _fixed = widget.initialFixed ?? '';
+      _dateFrom = widget.initialDateFrom;
+      _dateTo = widget.initialDateTo;
+      _cardFilterId = widget.initialCardId;
+      _cardFilterName = widget.initialCardName;
       _qCtrl.text = _q;
     });
     _qDebounce?.cancel();
@@ -193,12 +233,24 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       try {
         firstUser = !(await Api.instance.hasAnyTransactions());
       } catch (_) {/* 무시 — 노출 안 함 */}
+      Map<int, String> accountsById = const {};
+      Map<int, String> cardsById = const {};
+      try {
+        final accList = await Api.instance.listAccounts();
+        accountsById = {for (final a in accList) a.id: a.name};
+      } catch (_) {/* 무시 */}
+      try {
+        final cardList = await Api.instance.listCards();
+        cardsById = {for (final c in cardList) c.id: c.name};
+      } catch (_) {/* 무시 */}
       if (!mounted) return;
       setState(() {
         _cats = cats;
         _suggestions = sug;
         _recurringKeys = recurring;
         _isFirstUser = firstUser;
+        _accountsById = accountsById;
+        _cardsById = cardsById;
       });
       _reload();
     } catch (e) {
@@ -207,10 +259,12 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   Future<void> _reload() async {
-    _refreshPending();
+    _autoApplyDueFixed();
     try {
+      // 임의 기간/카드 필터가 있으면 month는 무시.
+      final hasRange = _dateFrom != null || _dateTo != null;
       final txs = await Api.instance.listTransactions(
-        month: _month,
+        month: hasRange ? null : _month,
         major: _major.isEmpty ? null : _major,
         sub: _subIsNull ? null : (_sub.isEmpty ? null : _sub),
         subIsNull: _subIsNull,
@@ -220,6 +274,11 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
             : _fixed == 'false'
                 ? false
                 : null,
+        type: _type.isEmpty ? null : _type,
+        dateFrom: _dateFrom,
+        dateTo: _dateTo,
+        cardId: _cardFilterId,
+        accountId: _accountFilterId,
       );
       if (!mounted) return;
       setState(() {
@@ -232,19 +291,10 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     }
   }
 
-  Future<void> _refreshPending() async {
-    // 정기지출 미등록 배너는 이번 달일 때만. 지난 달 페이지에선 표시하지 않음
-    // (정기지출은 매달 1일에 등록되는 흐름이고, 정기지출 이름 변경 시 과거 거래
-    // merchant와 매칭 안 돼서 false positive로 표시되는 문제도 회피).
-    if (_month != todayYm()) {
-      if (mounted) setState(() => _pending = null);
-      return;
-    }
-    try {
-      final p = await Api.instance.getPendingFixedExpenses(_month);
-      if (!mounted) return;
-      setState(() => _pending = p);
-    } catch (_) {/* 무시 */}
+  /// 그 월의 도래한 정기 거래를 자동으로 등록 (fire-and-forget, dedupe).
+  /// 미래 월은 처리 X. 등록되면 invalidateTx로 화면이 자동 reload 됨.
+  void _autoApplyDueFixed() {
+    Api.instance.applyDueFixedTransactions(_month).catchError((_) => 0);
   }
 
   void _shift(int delta) {
@@ -269,7 +319,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     });
   }
 
-  /// FAB 누르면 "수기 입력 / 명세서 가져오기" 두 옵션 시트.
+  /// FAB 누르면 [지출 추가][수입 추가][명세서 가져오기] 세 옵션 시트.
   Future<void> _showAddSheet() async {
     if (_cats == null) return;
     final action = await showModalBottomSheet<String>(
@@ -279,20 +329,25 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       builder: (_) => _AddSheet(),
     );
     if (!mounted || action == null) return;
-    if (action == 'manual') {
-      await _openModal();
+    if (action == 'expense') {
+      await _openModal(initialType: 'expense');
+    } else if (action == 'income') {
+      await _openModal(initialType: 'income');
+    } else if (action == 'transfer') {
+      await _openModal(initialType: 'transfer');
     } else if (action == 'import') {
       context.go('/settings/import/ai');
     }
   }
 
-  Future<void> _openModal([Tx? tx]) async {
+  Future<void> _openModal({Tx? tx, String initialType = 'expense'}) async {
     if (_cats == null) return;
     final result = await showTxModal(
       context,
       cats: _cats!,
       suggestions: _suggestions ?? const Suggestions(merchants: [], cards: []),
       tx: tx,
+      initialType: initialType,
     );
     if (result == TxModalResult.changed && mounted) {
       _suggestions = null;
@@ -304,21 +359,6 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     }
   }
 
-  Future<void> _applyFixed() async {
-    try {
-      final r = await Api.instance.applyFixedExpenses(_month);
-      if (!mounted) return;
-      showToast(
-        context,
-        '${r.insertedCount}건 등록'
-        '${r.skippedCount > 0 ? ' · ${r.skippedCount}건 스킵' : ''}',
-      );
-      _reload();
-    } catch (e) {
-      if (mounted) showToast(context, errorMessage(e), error: true);
-    }
-  }
-
   String _headerSub() {
     final parts = <String>[];
     if (_major.isNotEmpty) parts.add(_major);
@@ -326,9 +366,12 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     if (_subIsNull) parts.add('태그 없음');
     if (_fixed == 'true') parts.add('고정비');
     if (_fixed == 'false') parts.add('변동비');
+    final kindLabel = _type == 'income'
+        ? '수입'
+        : (_type == 'expense' ? '지출' : '거래');
     return parts.isEmpty
-        ? '${ymLabel(_month)} 지출'
-        : '${ymLabel(_month)} · ${parts.join(' · ')}';
+        ? '${ymLabel(_month)} $kindLabel'
+        : '${ymLabel(_month)} $kindLabel · ${parts.join(' · ')}';
   }
 
   void _clearFilters() {
@@ -341,7 +384,25 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       _minAmount = null;
       _maxAmount = null;
       _sort = _TxSort.dateDesc;
+      _dateFrom = null;
+      _dateTo = null;
+      _cardFilterId = null;
+      _cardFilterName = null;
+      _accountFilterId = null;
+      _accountFilterName = null;
       _qCtrl.text = '';
+    });
+    _reload();
+  }
+
+  void _clearRangeAndCard() {
+    setState(() {
+      _dateFrom = null;
+      _dateTo = null;
+      _cardFilterId = null;
+      _cardFilterName = null;
+      _accountFilterId = null;
+      _accountFilterName = null;
     });
     _reload();
   }
@@ -349,6 +410,16 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   /// 서버에서 받은 거래에 client-side 추가 필터(금액 범위) + 정렬 적용.
   List<Tx> _applyExtraFilters(List<Tx> rows) {
     var filtered = rows;
+    // 미래 일자 거래는 거래내역에 안 보임 — 도래일에 자동 노출.
+    // 거래내역 = 발생 거래 일관성 + 자산 today filter와 통일된 동작.
+    // 정기 거래를 미래 일자로 옮긴 케이스는 카탈로그 row 상태("X/Y 등록 예정")로 표시됨.
+    if (_month == todayYm()) {
+      final now = DateTime.now();
+      final today =
+          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+      filtered =
+          filtered.where((t) => t.date.compareTo(today) <= 0).toList();
+    }
     if (_minAmount != null) {
       filtered = filtered.where((t) => t.amount >= _minAmount!).toList();
     }
@@ -398,6 +469,16 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         initialMin: _minAmount,
         initialMax: _maxAmount,
         initialSort: _sort,
+        initialCardId: _cardFilterId,
+        initialAccountId: _accountFilterId,
+        initialDateFrom: _dateFrom,
+        initialDateTo: _dateTo,
+        cards: [
+          for (final e in _cardsById.entries) MapEntry(e.key, e.value),
+        ],
+        accounts: [
+          for (final e in _accountsById.entries) MapEntry(e.key, e.value),
+        ],
       ),
     );
     if (result == null || !mounted) return;
@@ -405,7 +486,14 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
       _minAmount = result.minAmount;
       _maxAmount = result.maxAmount;
       _sort = result.sort;
+      _cardFilterId = result.cardId;
+      _cardFilterName = result.cardName;
+      _accountFilterId = result.accountId;
+      _accountFilterName = result.accountName;
+      _dateFrom = result.dateFrom;
+      _dateTo = result.dateTo;
     });
+    _reload();
   }
 
   @override
@@ -429,78 +517,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                   Api.instance.invalidateAllCaches();
                   await _reload();
                 },
-                child: ListView(
-                  controller: _scrollCtrl,
-                  padding: const EdgeInsets.fromLTRB(0, 0, 0, 90),
-                  children: [
-                    PageHeader(
-                      title: '거래내역',
-                      subtitle: _headerSub(),
-                      actions: [
-                        MonthSwitcher(
-                          label: MediaQuery.sizeOf(context).width >= 700
-                              ? ymLabel(_month)
-                              : ymLabelShort(_month),
-                          onPrev: () => _shift(-1),
-                          onNext: () => _shift(1),
-                          onTapLabel: _pickMonth,
-                        ),
-                      ],
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                      child: _toolbar(cats),
-                    ),
-                    if (_sub.isNotEmpty ||
-                        _subIsNull ||
-                        _q.isNotEmpty ||
-                        _minAmount != null ||
-                        _maxAmount != null ||
-                        _sort != _TxSort.dateDesc)
-                      Padding(
-                        padding:
-                            const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                        child: Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            if (_sub.isNotEmpty)
-                              _Chip(
-                                label: '세부: $_sub',
-                                onClear: _clearFilters,
-                              ),
-                            if (_subIsNull)
-                              _Chip(
-                                label: '태그 없음',
-                                onClear: _clearFilters,
-                              ),
-                            if (_q.isNotEmpty)
-                              _Chip(
-                                label: '검색: $_q',
-                                onClear: _clearFilters,
-                              ),
-                            if (_minAmount != null || _maxAmount != null)
-                              _Chip(
-                                label: _amountRangeLabel(),
-                                onClear: () {
-                                  setState(() {
-                                    _minAmount = null;
-                                    _maxAmount = null;
-                                  });
-                                },
-                              ),
-                            if (_sort != _TxSort.dateDesc)
-                              _Chip(
-                                label: '정렬: ${_sort.label}',
-                                onClear: () =>
-                                    setState(() => _sort = _TxSort.dateDesc),
-                              ),
-                          ],
-                        ),
-                      ),
-                    _list(),
-                  ],
-                ),
+                child: _buildVirtualizedList(cats),
               ),
       ),
     );
@@ -589,7 +606,11 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   Widget _toolbar(CategoriesData cats) {
-    final majors = ['', ...cats.majors];
+    // _type에 맞는 majors만 노출. type=''면 모든 majors.
+    final filteredMajors = _type.isEmpty
+        ? cats.majors
+        : cats.majorsOf(_type);
+    final majors = ['', ...filteredMajors];
     // 선택된 major의 태그 옵션. major 선택 X면 빈 리스트 → sub 드랍다운 숨김.
     final subsForMajor = _major.isEmpty
         ? const <String>[]
@@ -609,6 +630,62 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
             prefixIcon: Icon(Icons.search,
                 color: AppColors.text3, size: 20),
           ),
+        ),
+        const SizedBox(height: 8),
+        // 수입/지출 필터 chips
+        Row(
+          children: [
+            _TypeChip(
+              label: '전체',
+              selected: _type.isEmpty,
+              onTap: () {
+                if (_type.isEmpty) return;
+                setState(() {
+                  _type = '';
+                  // major가 다른 type 카테고리면 reset.
+                });
+                _reload();
+              },
+            ),
+            const SizedBox(width: 6),
+            _TypeChip(
+              label: '지출',
+              selected: _type == 'expense',
+              onTap: () {
+                if (_type == 'expense') return;
+                setState(() {
+                  _type = 'expense';
+                  if (_major.isNotEmpty &&
+                      cats.typeOf(_major) != 'expense') {
+                    _major = '';
+                    _sub = '';
+                    _subIsNull = false;
+                  }
+                });
+                _reload();
+              },
+            ),
+            const SizedBox(width: 6),
+            _TypeChip(
+              label: '수입',
+              selected: _type == 'income',
+              accent: AppColors.incomeText,
+              accentBg: AppColors.incomeBg,
+              onTap: () {
+                if (_type == 'income') return;
+                setState(() {
+                  _type = 'income';
+                  if (_major.isNotEmpty &&
+                      cats.typeOf(_major) != 'income') {
+                    _major = '';
+                    _sub = '';
+                    _subIsNull = false;
+                  }
+                });
+                _reload();
+              },
+            ),
+          ],
         ),
         const SizedBox(height: 8),
         Row(
@@ -684,47 +761,130 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     );
   }
 
-  Widget _list() {
+  /// ListView.builder 기반 가상화 — header/toolbar는 SliverToBoxAdapter처럼
+  /// 한 줄씩 차지하고, row 영역은 일별 그룹 단위로 itemBuilder가 호출돼서
+  /// 화면 밖 항목은 빌드 안 됨. "올해" 같은 큰 결과셋도 즉시 스크롤.
+  Widget _buildVirtualizedList(CategoriesData cats) {
+    // 1) 고정 헤더 영역 — 항상 위에 노출되는 것들.
+    final fixed = <Widget Function(BuildContext)>[];
+    fixed.add((_) => PageHeader(
+          title: '거래내역',
+          subtitle: _headerSub(),
+          actions: [
+            MonthSwitcher(
+              label: MediaQuery.sizeOf(context).width >= 700
+                  ? ymLabel(_month)
+                  : ymLabelShort(_month),
+              onPrev: () => _shift(-1),
+              onNext: () => _shift(1),
+              onTapLabel: _pickMonth,
+            ),
+          ],
+        ));
+    if (_hasRangeOrCard) {
+      fixed.add((_) => Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: _RangeFilterBanner(
+              cardName: _cardFilterName,
+              accountName: _accountFilterName,
+              dateFrom: _dateFrom,
+              dateTo: _dateTo,
+              onClear: _clearRangeAndCard,
+            ),
+          ));
+    }
+    fixed.add((_) => Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          child: _toolbar(cats),
+        ));
+    final showActiveChips = _sub.isNotEmpty ||
+        _subIsNull ||
+        _q.isNotEmpty ||
+        _minAmount != null ||
+        _maxAmount != null ||
+        _sort != _TxSort.dateDesc;
+    if (showActiveChips) {
+      fixed.add((_) => Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                if (_sub.isNotEmpty)
+                  _Chip(label: '세부: $_sub', onClear: _clearFilters),
+                if (_subIsNull)
+                  _Chip(label: '태그 없음', onClear: _clearFilters),
+                if (_q.isNotEmpty)
+                  _Chip(label: '검색: $_q', onClear: _clearFilters),
+                if (_minAmount != null || _maxAmount != null)
+                  _Chip(
+                    label: _amountRangeLabel(),
+                    onClear: () {
+                      setState(() {
+                        _minAmount = null;
+                        _maxAmount = null;
+                      });
+                    },
+                  ),
+                if (_sort != _TxSort.dateDesc)
+                  _Chip(
+                    label: '정렬: ${_sort.label}',
+                    onClear: () =>
+                        setState(() => _sort = _TxSort.dateDesc),
+                  ),
+              ],
+            ),
+          ));
+    }
+
+    // 2) 거래 데이터 처리 — 에러/로딩/빈 상태/일별 그룹.
     if (_txs == null) {
-      if (_txError != null) {
+      fixed.add((_) {
+        if (_txError != null) {
+          return Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(errorMessage(_txError!),
+                style: TextStyle(color: AppColors.danger)),
+          );
+        }
         return Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(errorMessage(_txError!),
-              style: TextStyle(color: AppColors.danger)),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _txListSkeleton(),
         );
-      }
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: _txListSkeleton(),
+      });
+      return ListView.builder(
+        controller: _scrollCtrl,
+        padding: const EdgeInsets.fromLTRB(0, 0, 0, 90),
+        itemCount: fixed.length,
+        itemBuilder: (ctx, i) => fixed[i](ctx),
       );
     }
+
     final rows = _applyExtraFilters(_txs!);
     final hasFilter = _hasFilter;
-    final total = rows.fold<int>(0, (s, r) => s + r.amount);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _Summary(
+    final total = rows
+        .where((r) => r.type == 'expense' || r.type == 'income')
+        .fold<int>(0, (s, r) => s + r.amount);
+
+    // Summary
+    fixed.add((_) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _Summary(
             label: hasFilter
                 ? '필터된 합계 · ${ymLabel(_month)}'
-                : '${ymLabel(_month)} 합계',
+                : '${ymLabel(_month)} ${_type == 'income' ? '수입' : (_type == 'expense' ? '지출' : '거래')} 합계',
             total: total,
             count: rows.length,
             filtered: hasFilter,
           ),
-          if (_pending != null && _pending!.pending > 0) ...[
-            const SizedBox(height: 10),
-            _PendingFixedBanner(
-              month: _month,
-              pendingCount: _pending!.pending,
-              onApply: _applyFixed,
-            ),
-          ],
-          const SizedBox(height: 10),
-          if (rows.isEmpty)
-            EmptyCard(
+        ));
+    fixed.add((_) => const SizedBox(height: 10));
+
+    // 빈 상태
+    if (rows.isEmpty) {
+      fixed.add((_) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: EmptyCard(
               icon: hasFilter
                   ? Icons.filter_alt_off_outlined
                   : (_isFirstUser
@@ -750,39 +910,58 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                   (!hasFilter && _isFirstUser) ? '직접 입력' : null,
               onSecondaryAction:
                   (!hasFilter && _isFirstUser) ? _openModal : null,
-            )
-          else
-            AppCard(
-              tight: true,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 4),
-              child: _grouped(rows),
             ),
-        ],
-      ),
-    );
-  }
+          ));
+      return ListView.builder(
+        controller: _scrollCtrl,
+        padding: const EdgeInsets.fromLTRB(0, 0, 0, 90),
+        itemCount: fixed.length,
+        itemBuilder: (ctx, i) => fixed[i](ctx),
+      );
+    }
 
-  Widget _grouped(List<Tx> rows) {
+    // 일별 그룹화 — 각 그룹이 ListView.builder의 한 항목.
     final byDate = <String, List<Tx>>{};
     for (final r in rows) {
       byDate.putIfAbsent(r.date, () => []).add(r);
     }
-    final children = <Widget>[];
-    final entries = byDate.entries.toList();
-    for (final e in entries) {
-      final sum = e.value.fold<int>(0, (s, t) => s + t.amount);
-      children.add(TxDayHeader(date: e.key, total: sum));
-      for (final tx in e.value) {
-        final key = '${tx.merchant}|${tx.majorCategory}';
-        children.add(TxRow(
-          tx: tx,
-          isRecurring: _recurringKeys.contains(key),
-          onTap: () => _openModal(tx),
-        ));
-      }
-    }
-    return Column(children: children);
+    final groups = byDate.entries.toList();
+
+    return ListView.builder(
+      controller: _scrollCtrl,
+      padding: const EdgeInsets.fromLTRB(0, 0, 0, 90),
+      itemCount: fixed.length + groups.length,
+      itemBuilder: (ctx, i) {
+        if (i < fixed.length) return fixed[i](ctx);
+        final entry = groups[i - fixed.length];
+        final dayTxs = entry.value;
+        final sum = dayTxs
+            .where((t) => t.type == 'expense' || t.type == 'income')
+            .fold<int>(0, (s, t) => s + t.amount);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: AppCard(
+            tight: true,
+            padding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 4),
+            child: Column(
+              children: [
+                TxDayHeader(date: entry.key, total: sum),
+                for (final tx in dayTxs)
+                  TxRow(
+                    tx: tx,
+                    isRecurring: _recurringKeys
+                        .contains('${tx.merchant}|${tx.majorCategory}'),
+                    accountsById: _accountsById,
+                    cardsById: _cardsById,
+                    onTap: () => _openModal(tx: tx),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 
@@ -838,60 +1017,6 @@ class _Summary extends StatelessWidget {
                     color: AppColors.text3,
                   )),
             ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PendingFixedBanner extends StatelessWidget {
-  const _PendingFixedBanner({
-    required this.month,
-    required this.pendingCount,
-    required this.onApply,
-  });
-  final String month;
-  final int pendingCount;
-  final VoidCallback onApply;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-      decoration: BoxDecoration(
-        color: AppColors.primaryWeak,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: RichText(
-              text: TextSpan(
-                style: TextStyle(
-                  color: AppColors.text,
-                  fontSize: 13.5,
-                ),
-                children: [
-                  TextSpan(
-                      text: '${ymLabel(month)} 정기지출 $pendingCount건',
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
-                  const TextSpan(text: '이 아직 등록되지 않았어요'),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(0, 36),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
-              textStyle: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-            onPressed: onApply,
-            child: const Text('일괄 등록'),
           ),
         ],
       ),
@@ -971,10 +1096,22 @@ class _FilterResult {
   final int? minAmount;
   final int? maxAmount;
   final _TxSort sort;
+  final int? cardId;
+  final String? cardName;
+  final int? accountId;
+  final String? accountName;
+  final String? dateFrom;
+  final String? dateTo;
   const _FilterResult({
     required this.minAmount,
     required this.maxAmount,
     required this.sort,
+    required this.cardId,
+    required this.cardName,
+    required this.accountId,
+    required this.accountName,
+    required this.dateFrom,
+    required this.dateTo,
   });
 }
 
@@ -983,10 +1120,23 @@ class _FilterSheet extends StatefulWidget {
     required this.initialMin,
     required this.initialMax,
     required this.initialSort,
+    required this.initialCardId,
+    required this.initialAccountId,
+    required this.initialDateFrom,
+    required this.initialDateTo,
+    required this.cards,
+    required this.accounts,
   });
   final int? initialMin;
   final int? initialMax;
   final _TxSort initialSort;
+  final int? initialCardId;
+  final int? initialAccountId;
+  final String? initialDateFrom;
+  final String? initialDateTo;
+  /// (id, name) 리스트 — sort_order 적용된 채로 들어옴.
+  final List<MapEntry<int, String>> cards;
+  final List<MapEntry<int, String>> accounts;
 
   @override
   State<_FilterSheet> createState() => _FilterSheetState();
@@ -996,6 +1146,11 @@ class _FilterSheetState extends State<_FilterSheet> {
   late final TextEditingController _minCtrl;
   late final TextEditingController _maxCtrl;
   late _TxSort _sort;
+  // 0 = 전체 (드롭다운 sentinel), 그 외 = 실제 id.
+  late int _cardId;
+  late int _accountId;
+  String? _dateFrom;
+  String? _dateTo;
 
   @override
   void initState() {
@@ -1009,6 +1164,10 @@ class _FilterSheetState extends State<_FilterSheet> {
       AmountField.setNumber(_maxCtrl, widget.initialMax);
     }
     _sort = widget.initialSort;
+    _cardId = widget.initialCardId ?? 0;
+    _accountId = widget.initialAccountId ?? 0;
+    _dateFrom = widget.initialDateFrom;
+    _dateTo = widget.initialDateTo;
   }
 
   @override
@@ -1018,11 +1177,128 @@ class _FilterSheetState extends State<_FilterSheet> {
     super.dispose();
   }
 
+  Future<void> _pickRange() async {
+    final now = DateTime.now();
+    final initialStart = _dateFrom != null
+        ? DateTime.tryParse(_dateFrom!) ?? DateTime(now.year, now.month, 1)
+        : DateTime(now.year, now.month, 1);
+    final initialEnd =
+        _dateTo != null ? DateTime.tryParse(_dateTo!) ?? now : now;
+    final picked = await showModalBottomSheet<DateTimeRange>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.5),
+      builder: (_) => _RangePickerSheet(
+        initialStart: initialStart,
+        initialEnd: initialEnd,
+      ),
+    );
+    if (picked == null) return;
+    setState(() {
+      _dateFrom = _fmtIso(picked.start);
+      _dateTo = _fmtIso(picked.end);
+    });
+  }
+
+  String _shortMD(String iso) {
+    final p = iso.split('-');
+    if (p.length != 3) return iso;
+    return '${int.parse(p[1])}.${int.parse(p[2])}';
+  }
+
+  String _fmtIso(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// 프리셋 정의 — (라벨, [from, to]) 페어. now를 기준으로 매번 계산.
+  List<MapEntry<String, DateTimeRange>> _presets() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final firstOfMonth = DateTime(now.year, now.month, 1);
+    final lastMonthFirst = DateTime(now.year, now.month - 1, 1);
+    final lastMonthLast = DateTime(now.year, now.month, 0); // 전월 마지막 날
+    final firstOfYear = DateTime(now.year, 1, 1);
+    return [
+      MapEntry('이번 달', DateTimeRange(start: firstOfMonth, end: today)),
+      MapEntry('지난 달',
+          DateTimeRange(start: lastMonthFirst, end: lastMonthLast)),
+      MapEntry('최근 7일',
+          DateTimeRange(start: today.subtract(const Duration(days: 6)), end: today)),
+      MapEntry('최근 30일',
+          DateTimeRange(start: today.subtract(const Duration(days: 29)), end: today)),
+      MapEntry('올해', DateTimeRange(start: firstOfYear, end: today)),
+    ];
+  }
+
+  bool _isPresetActive(DateTimeRange r) {
+    if (_dateFrom == null || _dateTo == null) return false;
+    return _dateFrom == _fmtIso(r.start) && _dateTo == _fmtIso(r.end);
+  }
+
+  Widget _buildPresetChips() {
+    final presets = _presets();
+    final isCustom = _dateFrom != null &&
+        _dateTo != null &&
+        !presets.any((e) => _isPresetActive(e.value));
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final p in presets)
+          _DateChip(
+            label: p.key,
+            selected: _isPresetActive(p.value),
+            onTap: () => setState(() {
+              _dateFrom = _fmtIso(p.value.start);
+              _dateTo = _fmtIso(p.value.end);
+            }),
+          ),
+        _DateChip(
+          label: isCustom
+              ? '${_shortMD(_dateFrom!)} ~ ${_shortMD(_dateTo!)}'
+              : '직접 선택',
+          icon: Icons.date_range,
+          selected: isCustom,
+          onTap: _pickRange,
+        ),
+        if (_dateFrom != null || _dateTo != null)
+          _DateChip(
+            label: '해제',
+            icon: Icons.close,
+            selected: false,
+            onTap: () => setState(() {
+              _dateFrom = null;
+              _dateTo = null;
+            }),
+          ),
+      ],
+    );
+  }
+
   void _apply() {
+    final cardName = _cardId == 0
+        ? null
+        : widget.cards
+            .firstWhere((e) => e.key == _cardId,
+                orElse: () => const MapEntry(0, ''))
+            .value;
+    final accountName = _accountId == 0
+        ? null
+        : widget.accounts
+            .firstWhere((e) => e.key == _accountId,
+                orElse: () => const MapEntry(0, ''))
+            .value;
     Navigator.of(context).pop(_FilterResult(
       minAmount: AmountField.parse(_minCtrl),
       maxAmount: AmountField.parse(_maxCtrl),
       sort: _sort,
+      cardId: _cardId == 0 ? null : _cardId,
+      cardName: (cardName != null && cardName.isEmpty) ? null : cardName,
+      accountId: _accountId == 0 ? null : _accountId,
+      accountName:
+          (accountName != null && accountName.isEmpty) ? null : accountName,
+      dateFrom: _dateFrom,
+      dateTo: _dateTo,
     ));
   }
 
@@ -1031,6 +1307,10 @@ class _FilterSheetState extends State<_FilterSheet> {
       _minCtrl.clear();
       _maxCtrl.clear();
       _sort = _TxSort.dateDesc;
+      _cardId = 0;
+      _accountId = 0;
+      _dateFrom = null;
+      _dateTo = null;
     });
   }
 
@@ -1081,6 +1361,68 @@ class _FilterSheetState extends State<_FilterSheet> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Text('기간',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.text2)),
+                    const SizedBox(height: 8),
+                    _buildPresetChips(),
+                    if (_dateFrom != null && _dateTo != null) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.event,
+                              size: 14, color: AppColors.text3),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${_shortMD(_dateFrom!)} ~ ${_shortMD(_dateTo!)}',
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.text2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    if (widget.cards.isNotEmpty) ...[
+                      Text('신용카드',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.text2)),
+                      const SizedBox(height: 8),
+                      AppDropdown<int>(
+                        value: _cardId,
+                        items: [
+                          const AppDropdownItem(value: 0, label: '전체'),
+                          for (final e in widget.cards)
+                            AppDropdownItem(value: e.key, label: e.value),
+                        ],
+                        onChanged: (v) => setState(() => _cardId = v),
+                      ),
+                      const SizedBox(height: 18),
+                    ],
+                    if (widget.accounts.isNotEmpty) ...[
+                      Text('계좌',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.text2)),
+                      const SizedBox(height: 8),
+                      AppDropdown<int>(
+                        value: _accountId,
+                        items: [
+                          const AppDropdownItem(value: 0, label: '전체'),
+                          for (final e in widget.accounts)
+                            AppDropdownItem(value: e.key, label: e.value),
+                        ],
+                        onChanged: (v) => setState(() => _accountId = v),
+                      ),
+                      const SizedBox(height: 18),
+                    ],
                     Text('금액 범위',
                         style: TextStyle(
                             fontSize: 13,
@@ -1226,7 +1568,121 @@ class _SegBtn extends StatelessWidget {
   }
 }
 
-/// FAB 누르면 뜨는 "수기 입력 / 명세서 가져오기" 시트.
+/// 자산 탭에서 진입했을 때 활성 기간/카드 필터 배지.
+class _RangeFilterBanner extends StatelessWidget {
+  const _RangeFilterBanner({
+    required this.cardName,
+    required this.accountName,
+    required this.dateFrom,
+    required this.dateTo,
+    required this.onClear,
+  });
+  final String? cardName;
+  final String? accountName;
+  final String? dateFrom;
+  final String? dateTo;
+  final VoidCallback onClear;
+
+  String _shortMD(String iso) {
+    final p = iso.split('-');
+    if (p.length != 3) return iso;
+    return '${int.parse(p[1])}.${int.parse(p[2])}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = <String>[];
+    if (cardName != null) parts.add(cardName!);
+    if (accountName != null) parts.add(accountName!);
+    if (dateFrom != null && dateTo != null) {
+      parts.add('${_shortMD(dateFrom!)} ~ ${_shortMD(dateTo!)}');
+    } else if (dateFrom != null) {
+      parts.add('${_shortMD(dateFrom!)} 이후');
+    } else if (dateTo != null) {
+      parts.add('${_shortMD(dateTo!)} 이전');
+    }
+    return Material(
+      color: AppColors.expenseBg,
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        child: Row(
+          children: [
+            Icon(Icons.filter_alt_outlined,
+                size: 16, color: AppColors.expenseText),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                parts.join(' · '),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.expenseText,
+                ),
+              ),
+            ),
+            InkWell(
+              onTap: onClear,
+              borderRadius: BorderRadius.circular(99),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.close,
+                    size: 16, color: AppColors.expenseText),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 수입/지출 필터 칩.
+class _TypeChip extends StatelessWidget {
+  const _TypeChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.accent,
+    this.accentBg,
+  });
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final Color? accent;
+  final Color? accentBg;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = selected
+        ? (accent ?? AppColors.primaryStrong)
+        : AppColors.text3;
+    final bg = selected
+        ? (accentBg ?? AppColors.primaryWeak)
+        : AppColors.surface2;
+    return Material(
+      color: bg,
+      borderRadius: BorderRadius.circular(99),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(99),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              color: fg,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// FAB 누르면 뜨는 진입 시트 — 지출/수입 큰 버튼 + 명세서 가져오기.
 class _AddSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -1249,15 +1705,51 @@ class _AddSheet extends StatelessWidget {
                 borderRadius: BorderRadius.circular(99),
               ),
             ),
-            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _BigKindButton(
+                      icon: Icons.shopping_cart_outlined,
+                      label: '지출',
+                      fg: AppColors.expenseText,
+                      bg: AppColors.expenseBg,
+                      borderColor: AppColors.expenseBorder,
+                      onTap: () => Navigator.of(context).pop('expense'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _BigKindButton(
+                      icon: Icons.savings_outlined,
+                      label: '수입',
+                      fg: AppColors.incomeText,
+                      bg: AppColors.incomeBg,
+                      borderColor: AppColors.incomeBorder,
+                      onTap: () => Navigator.of(context).pop('income'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 8, 18, 4),
+              child: Divider(height: 1, color: AppColors.line2),
+            ),
             _option(
               context,
-              icon: Icons.edit_outlined,
-              title: '직접 입력',
-              subtitle: '한 건씩 빠르게 추가',
-              value: 'manual',
+              icon: Icons.swap_horiz,
+              title: '내 계좌로 송금',
+              subtitle: '계좌 사이 이체 — 자산에서 빠지지 않아요',
+              value: 'transfer',
             ),
-            Divider(height: 1, color: AppColors.line2),
+            Divider(
+              height: 1,
+              color: AppColors.line2,
+              indent: 20,
+              endIndent: 20,
+            ),
             _option(
               context,
               icon: Icons.auto_awesome,
@@ -1328,6 +1820,467 @@ class _AddSheet extends StatelessWidget {
             Icon(Icons.chevron_right, size: 20, color: AppColors.text4),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _BigKindButton extends StatelessWidget {
+  const _BigKindButton({
+    required this.icon,
+    required this.label,
+    required this.fg,
+    required this.bg,
+    required this.borderColor,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final Color fg;
+  final Color bg;
+  final Color borderColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: bg,
+      borderRadius: BorderRadius.circular(AppRadius.lg),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            border: Border.all(color: borderColor, width: 1),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 22, color: fg),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w700,
+                  color: fg,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 필터 시트의 기간 프리셋 칩.
+class _DateChip extends StatelessWidget {
+  const _DateChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+  });
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = selected ? AppColors.primaryStrong : AppColors.text2;
+    final bg = selected ? AppColors.primaryWeak : AppColors.surface2;
+    final border = selected ? AppColors.primary : AppColors.line;
+    return Material(
+      color: bg,
+      borderRadius: BorderRadius.circular(99),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(99),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: border,
+              width: selected ? 1.2 : 1,
+            ),
+            borderRadius: BorderRadius.circular(99),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 14, color: fg),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: fg,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 직접 선택용 커스텀 캘린더 — 토스/뱅샐 스타일.
+/// 첫 탭 = 시작, 두 번째 탭 = 끝 (시작보다 이전이면 swap), 세 번째 탭 = 새 시작.
+class _RangePickerSheet extends StatefulWidget {
+  const _RangePickerSheet({
+    required this.initialStart,
+    required this.initialEnd,
+  });
+  final DateTime initialStart;
+  final DateTime initialEnd;
+
+  @override
+  State<_RangePickerSheet> createState() => _RangePickerSheetState();
+}
+
+class _RangePickerSheetState extends State<_RangePickerSheet> {
+  late DateTime _viewMonth;
+  DateTime? _start;
+  DateTime? _end;
+
+  @override
+  void initState() {
+    super.initState();
+    _start = _dateOnly(widget.initialStart);
+    _end = _dateOnly(widget.initialEnd);
+    _viewMonth = DateTime(widget.initialEnd.year, widget.initialEnd.month, 1);
+  }
+
+  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  void _onTapDay(DateTime d) {
+    setState(() {
+      if (_start == null || (_start != null && _end != null)) {
+        _start = d;
+        _end = null;
+      } else {
+        if (d.isBefore(_start!)) {
+          _end = _start;
+          _start = d;
+        } else {
+          _end = d;
+        }
+      }
+    });
+  }
+
+  void _shiftMonth(int delta) {
+    setState(() {
+      _viewMonth = DateTime(_viewMonth.year, _viewMonth.month + delta, 1);
+    });
+  }
+
+  String _ymLabel() =>
+      '${_viewMonth.year}.${_viewMonth.month.toString().padLeft(2, '0')}';
+
+  bool _isInRange(DateTime d) {
+    if (_start == null || _end == null) return false;
+    return !d.isBefore(_start!) && !d.isAfter(_end!);
+  }
+
+  bool _isStart(DateTime d) =>
+      _start != null && d.isAtSameMomentAs(_start!);
+  bool _isEnd(DateTime d) => _end != null && d.isAtSameMomentAs(_end!);
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    return Padding(
+      padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.xl),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 8),
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.line,
+                  borderRadius: BorderRadius.circular(99),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
+                child: Row(
+                  children: [
+                    const Text('기간 선택',
+                        style: TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w700)),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () => setState(() {
+                        _start = null;
+                        _end = null;
+                      }),
+                      child: Text('초기화',
+                          style: TextStyle(
+                              color: AppColors.text3, fontSize: 13)),
+                    ),
+                  ],
+                ),
+              ),
+              _buildMonthNav(),
+              const SizedBox(height: 4),
+              _buildWeekdays(),
+              const SizedBox(height: 4),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: _buildGrid(),
+              ),
+              const SizedBox(height: 12),
+              _buildFooter(),
+              const SizedBox(height: 4),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMonthNav() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+      child: Row(
+        children: [
+          IconButton(
+            onPressed: () => _shiftMonth(-1),
+            icon: Icon(Icons.chevron_left,
+                color: AppColors.text2, size: 22),
+            splashRadius: 20,
+          ),
+          Expanded(
+            child: Center(
+              child: Text(
+                _ymLabel(),
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          IconButton(
+            onPressed: () => _shiftMonth(1),
+            icon: Icon(Icons.chevron_right,
+                color: AppColors.text2, size: 22),
+            splashRadius: 20,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWeekdays() {
+    const days = ['일', '월', '화', '수', '목', '금', '토'];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: [
+          for (int i = 0; i < 7; i++)
+            Expanded(
+              child: Center(
+                child: Text(
+                  days[i],
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: i == 0
+                        ? AppColors.expenseText
+                        : (i == 6
+                            ? AppColors.incomeText
+                            : AppColors.text3),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGrid() {
+    // weekday: Mon=1..Sun=7; %7 → Sun=0,Mon=1...Sat=6 (일요일 시작 정렬)
+    final firstDow =
+        DateTime(_viewMonth.year, _viewMonth.month, 1).weekday % 7;
+    final daysInMonth =
+        DateTime(_viewMonth.year, _viewMonth.month + 1, 0).day;
+    final cells = <Widget>[];
+    for (int i = 0; i < firstDow; i++) {
+      cells.add(const SizedBox.shrink());
+    }
+    for (int d = 1; d <= daysInMonth; d++) {
+      final date = DateTime(_viewMonth.year, _viewMonth.month, d);
+      cells.add(_buildDayCell(date));
+    }
+    while (cells.length % 7 != 0) {
+      cells.add(const SizedBox.shrink());
+    }
+
+    final rows = <Widget>[];
+    for (int i = 0; i < cells.length; i += 7) {
+      rows.add(Row(
+        children: [
+          for (int j = 0; j < 7; j++)
+            Expanded(child: AspectRatio(aspectRatio: 1, child: cells[i + j])),
+        ],
+      ));
+    }
+    return Column(children: rows);
+  }
+
+  Widget _buildDayCell(DateTime date) {
+    final inRange = _isInRange(date);
+    final isStart = _isStart(date);
+    final isEnd = _isEnd(date);
+    final isEdge = isStart || isEnd;
+    final isSingleDay = isStart && isEnd;
+    final today = _dateOnly(DateTime.now());
+    final isToday = date.isAtSameMomentAs(today);
+    final dow = date.weekday % 7;
+
+    Color textColor;
+    if (isEdge) {
+      textColor = Colors.white;
+    } else if (inRange) {
+      textColor = AppColors.primaryStrong;
+    } else if (dow == 0) {
+      textColor = AppColors.expenseText;
+    } else if (dow == 6) {
+      textColor = AppColors.incomeText;
+    } else {
+      textColor = AppColors.text;
+    }
+
+    return GestureDetector(
+      onTap: () => _onTapDay(date),
+      behavior: HitTestBehavior.opaque,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (inRange && !isSingleDay)
+            Positioned.fill(
+              child: LayoutBuilder(
+                builder: (_, c) {
+                  // 원 직경(36)에 정확히 맞춰 띠 높이 = 36, 위아래 균등 패딩.
+                  final pad = ((c.maxHeight - 36) / 2).clamp(0.0, 40.0);
+                  return Padding(
+                    padding: EdgeInsets.symmetric(vertical: pad),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            color: isStart
+                                ? Colors.transparent
+                                : AppColors.primaryWeak,
+                          ),
+                        ),
+                        Expanded(
+                          child: Container(
+                            color: isEnd
+                                ? Colors.transparent
+                                : AppColors.primaryWeak,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          if (isEdge)
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+            ),
+          Text(
+            '${date.day}',
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: isEdge || isToday
+                  ? FontWeight.w700
+                  : FontWeight.w500,
+              color: textColor,
+            ),
+          ),
+          if (isToday && !isEdge)
+            Positioned(
+              bottom: 6,
+              child: Container(
+                width: 4,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _shortMD(DateTime d) => '${d.month}.${d.day}';
+
+  Widget _buildFooter() {
+    final canApply = _start != null && _end != null;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: AppColors.line2)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              canApply
+                  ? '${_shortMD(_start!)} ~ ${_shortMD(_end!)}'
+                  : (_start != null
+                      ? '시작 ${_shortMD(_start!)} · 끝 선택'
+                      : '날짜를 선택해주세요'),
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+                color: canApply ? AppColors.text : AppColors.text3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton(
+            onPressed: canApply
+                ? () => Navigator.of(context).pop(
+                      DateTimeRange(start: _start!, end: _end!),
+                    )
+                : null,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(80, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+            ),
+            child: const Text('확인'),
+          ),
+        ],
       ),
     );
   }

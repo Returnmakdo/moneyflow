@@ -19,6 +19,8 @@ class CategoriesScreen extends StatefulWidget {
 class _CategoriesScreenState extends State<CategoriesScreen> {
   CategoriesData? _cats;
   Object? _error;
+  // 'expense' | 'income' — 화면 상단 탭으로 전환.
+  String _type = 'expense';
 
   late final Listenable _apiListenable = Listenable.merge([
     Api.instance.majorsVersion,
@@ -50,7 +52,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
 
   Future<void> _reload() async {
     try {
-      final c = await Api.instance.listCategories();
+      final c = await Api.instance.listCategories(type: _type);
       if (!mounted) return;
       setState(() {
         _cats = c;
@@ -104,11 +106,14 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
   }
 
   Future<void> _addMajor() async {
-    final name =
-        await _promptText(title: '카테고리 추가', label: '새 카테고리 이름', confirmText: '추가');
+    final name = await _promptText(
+      title: _type == 'income' ? '수입 카테고리 추가' : '지출 카테고리 추가',
+      label: _type == 'income' ? '예: 부업, 환급' : '예: 식비/카페',
+      confirmText: '추가',
+    );
     if (name == null) return;
     try {
-      await Api.instance.createMajor(name);
+      await Api.instance.createMajor(name, type: _type);
       if (!mounted) return;
       showToast(context, '추가했어요');
       _reload();
@@ -229,60 +234,148 @@ class _CategoriesScreenState extends State<CategoriesScreen> {
         backgroundColor: AppColors.primary,
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
-        label: const Text('카테고리 추가'),
+        label: Text(_type == 'income' ? '수입 카테고리 추가' : '카테고리 추가'),
       ),
       body: SafeArea(
-        child: Builder(
-          builder: (context) {
-            if (_cats == null) {
-              if (_error != null) {
-                return Center(child: Text(errorMessage(_error!)));
-              }
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
-                children: [
-                  for (var i = 0; i < 5; i++) ...[
-                    AppCard(
-                      padding: const EdgeInsets.fromLTRB(18, 14, 14, 14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
-                          SkeletonLine(width: 80, height: 16),
-                          SizedBox(height: 14),
-                          Skeleton(height: 28, radius: 99),
-                          SizedBox(height: 14),
-                          Skeleton(width: 110, height: 36, radius: 10),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
-                ],
-              );
-            }
-            final cats = _cats!;
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
-              children: [
-                for (final m in cats.majors)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: _MajorCard(
-                      key: ValueKey(m),
-                      major: m,
-                      subs: cats.byMajor[m] ?? const [],
-                      onAddSub: () => _addSub(m),
-                      onRenameSub: _renameSub,
-                      onDeleteSub: _deleteSub,
-                      onRename: (v) => _renameMajor(m, v),
-                      onDelete: () => _deleteMajor(m),
-                    ),
-                  ),
-              ],
-            );
-          },
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: _typeTabs(),
+            ),
+            Expanded(child: _content()),
+          ],
         ),
       ),
+    );
+  }
+
+  Widget _typeTabs() {
+    Widget tab(String value, String label) {
+      final selected = _type == value;
+      return Expanded(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            if (_type == value) return;
+            setState(() {
+              _type = value;
+              _cats = null;
+            });
+            _reload();
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: BoxDecoration(
+              color: selected
+                  ? (value == 'income'
+                      ? AppColors.incomeBg
+                      : AppColors.surface)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+            ),
+            child: Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  color: selected
+                      ? (value == 'income'
+                          ? AppColors.incomeText
+                          : AppColors.text)
+                      : AppColors.text3,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: AppColors.surface2,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Row(
+        children: [
+          tab('expense', '지출'),
+          tab('income', '수입'),
+        ],
+      ),
+    );
+  }
+
+  Widget _content() {
+    return Builder(
+      builder: (context) {
+        if (_cats == null) {
+          if (_error != null) {
+            return Center(child: Text(errorMessage(_error!)));
+          }
+          return ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
+            children: [
+              for (var i = 0; i < 5; i++) ...[
+                AppCard(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 14, 14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      SkeletonLine(width: 80, height: 16),
+                      SizedBox(height: 14),
+                      Skeleton(height: 28, radius: 99),
+                      SizedBox(height: 14),
+                      Skeleton(width: 110, height: 36, radius: 10),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+            ],
+          );
+        }
+        final cats = _cats!;
+        if (cats.majors.isEmpty) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Text(
+                _type == 'income'
+                    ? '수입 카테고리가 아직 없어요.\n월급, 이자 같은 항목을 추가해보세요.'
+                    : '카테고리가 아직 없어요.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  color: AppColors.text3,
+                  height: 1.6,
+                ),
+              ),
+            ),
+          );
+        }
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
+          children: [
+            for (final m in cats.majors)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _MajorCard(
+                  key: ValueKey(m),
+                  major: m,
+                  subs: cats.byMajor[m] ?? const [],
+                  onAddSub: () => _addSub(m),
+                  onRenameSub: _renameSub,
+                  onDeleteSub: _deleteSub,
+                  onRename: (v) => _renameMajor(m, v),
+                  onDelete: () => _deleteMajor(m),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

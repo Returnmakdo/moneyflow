@@ -2,7 +2,16 @@ import 'package:flutter/material.dart';
 
 import '../theme.dart';
 
-/// 대시보드 KPI 카드. primary=true면 강조 색상 (이번 달 지출).
+/// KPI 강조 색.
+/// - expense: 지출 (빨강)
+/// - income: 수입 (파랑)
+/// - good: 흑자/저축 양수 (초록)
+/// - bad: 적자 (빨강 강함)
+/// - neutral: 보조 정보 (검정)
+enum KpiAccent { expense, income, good, bad, neutral }
+
+/// 대시보드 KPI 카드.
+/// accent로 value 색을 분기. 카드 배경은 모두 동일해서 시각 평탄.
 class KpiCard extends StatelessWidget {
   const KpiCard({
     super.key,
@@ -11,24 +20,38 @@ class KpiCard extends StatelessWidget {
     this.unit = '원',
     this.delta,
     this.deltaExtra,
-    this.primary = false,
+    this.accent = KpiAccent.neutral,
   });
   final String label;
   final String value; // 큰 숫자
   final String unit;
   final String? delta;
   final String? deltaExtra;
-  final bool primary;
+  final KpiAccent accent;
+
+  Color _valueColor() {
+    switch (accent) {
+      case KpiAccent.expense:
+        return AppColors.text; // 지출 = 검정 (기본 강조)
+      case KpiAccent.income:
+        return AppColors.incomeText;
+      case KpiAccent.good:
+        return AppColors.success;
+      case KpiAccent.bad:
+        return AppColors.danger;
+      case KpiAccent.neutral:
+        return AppColors.text;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final fg = primary ? Colors.white : AppColors.text;
-    final fg2 = primary ? Colors.white.withValues(alpha: 0.85) : AppColors.text3;
-    final bg = primary ? AppColors.primary : AppColors.surface;
+    final fg = _valueColor();
+    final fg2 = AppColors.text3;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: bg,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.xl),
         boxShadow: const [
           BoxShadow(color: Color(0x0A0F172A), blurRadius: 6, offset: Offset(0, 1)),

@@ -21,6 +21,15 @@ class _Light {
   static const success = Color(0xFF1ABF76);
   static const danger = Color(0xFFF04452);
   static const warning = Color(0xFFF59E0B);
+  // 수입 강조 — 라이트 톤. 텍스트(진한)/배경(옅은)/테두리.
+  // 검정과 명확히 구분되도록 더 밝고 선명한 파랑.
+  static const incomeText = Color(0xFF3B82F6);
+  static const incomeBg = Color(0xFFE0EDFF);
+  static const incomeBorder = Color(0xFFBFDBFE);
+  // 지출 강조 — 빨강 톤. 거래내역 amount + 카드 pill 모두 동일 톤 사용.
+  static const expenseText = Color(0xFFB91C1C);
+  static const expenseBg = Color(0xFFFEE2E2);
+  static const expenseBorder = Color(0xFFFCA5A5);
 }
 
 class _Dark {
@@ -39,6 +48,14 @@ class _Dark {
   static const success = Color(0xFF2BC986);
   static const danger = Color(0xFFFF5762);
   static const warning = Color(0xFFFBA62C);
+  // 수입 강조 — 다크 톤. 다크 배경에서 잘 보이게 밝은 파랑.
+  static const incomeText = Color(0xFF7DB7FF);
+  static const incomeBg = Color(0xFF152A4A);
+  static const incomeBorder = Color(0xFF2A4977);
+  // 지출 강조 — 다크 톤. 빨강 톤.
+  static const expenseText = Color(0xFFFCA5A5);
+  static const expenseBg = Color(0xFF3A1A1D);
+  static const expenseBorder = Color(0xFF6B2B30);
 }
 
 /// 화면 코드에서 직접 참조 (예: `AppColors.text`). 현재 활성 ThemeMode에 따라
@@ -69,6 +86,19 @@ class AppColors {
   static Color get success => _isDark ? _Dark.success : _Light.success;
   static Color get danger => _isDark ? _Dark.danger : _Light.danger;
   static Color get warning => _isDark ? _Dark.warning : _Light.warning;
+  // 수입 (income) — 텍스트/배경/테두리 3종.
+  static Color get incomeText =>
+      _isDark ? _Dark.incomeText : _Light.incomeText;
+  static Color get incomeBg => _isDark ? _Dark.incomeBg : _Light.incomeBg;
+  static Color get incomeBorder =>
+      _isDark ? _Dark.incomeBorder : _Light.incomeBorder;
+  // 지출 (expense) — 빨강 톤. 거래내역 amount + 카드 pill 등 공용.
+  static Color get expenseText =>
+      _isDark ? _Dark.expenseText : _Light.expenseText;
+  static Color get expenseBg =>
+      _isDark ? _Dark.expenseBg : _Light.expenseBg;
+  static Color get expenseBorder =>
+      _isDark ? _Dark.expenseBorder : _Light.expenseBorder;
 }
 
 class AppRadius {

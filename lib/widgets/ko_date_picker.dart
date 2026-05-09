@@ -351,6 +351,8 @@ class _KoDatePickerDialogState extends State<_KoDatePickerDialog> {
               year: _year,
               month: _month,
               selectedDay: selDay,
+              firstDate: widget.firstDate,
+              lastDate: widget.lastDate,
               onSelected: (d) => setState(() => _day = d),
             ),
             const SizedBox(height: 12),
@@ -414,11 +416,28 @@ class _DayGrid extends StatelessWidget {
     required this.month,
     required this.selectedDay,
     required this.onSelected,
+    this.firstDate,
+    this.lastDate,
   });
   final int year;
   final int month;
   final int selectedDay;
   final ValueChanged<int> onSelected;
+  final DateTime? firstDate;
+  final DateTime? lastDate;
+
+  bool _enabled(int day) {
+    final d = DateTime(year, month, day);
+    if (firstDate != null && d.isBefore(DateTime(
+          firstDate!.year, firstDate!.month, firstDate!.day))) {
+      return false;
+    }
+    if (lastDate != null && d.isAfter(DateTime(
+          lastDate!.year, lastDate!.month, lastDate!.day))) {
+      return false;
+    }
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -467,7 +486,8 @@ class _DayGrid extends StatelessWidget {
                 day: d,
                 weekday: (firstWeekday + d - 1) % 7,
                 selected: d == selectedDay,
-                onTap: () => onSelected(d),
+                enabled: _enabled(d),
+                onTap: _enabled(d) ? () => onSelected(d) : null,
               ),
           ],
         ),
@@ -481,22 +501,27 @@ class _DayCell extends StatelessWidget {
     required this.day,
     required this.weekday,
     required this.selected,
+    required this.enabled,
     required this.onTap,
   });
   final int day;
   final int weekday; // 0=Sun
   final bool selected;
-  final VoidCallback onTap;
+  final bool enabled;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final color = selected
-        ? Colors.white
-        : (weekday == 0
-            ? AppColors.danger
-            : (weekday == 6
-                ? AppColors.primary
-                : AppColors.text));
+    Color color;
+    if (selected) {
+      color = Colors.white;
+    } else if (!enabled) {
+      color = AppColors.text4;
+    } else {
+      color = weekday == 0
+          ? AppColors.danger
+          : (weekday == 6 ? AppColors.primary : AppColors.text);
+    }
     return Material(
       color: selected ? AppColors.primary : Colors.transparent,
       borderRadius: BorderRadius.circular(99),
