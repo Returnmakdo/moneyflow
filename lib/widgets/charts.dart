@@ -332,6 +332,8 @@ class MonthlyTrendBar extends StatelessWidget {
                   tooltipPadding: const EdgeInsets.symmetric(
                       horizontal: 10, vertical: 6),
                   tooltipMargin: 6,
+                  fitInsideHorizontally: true,
+                  fitInsideVertically: true,
                   getTooltipItem: (group, gx, rod, ry) {
                     final t = trend[group.x];
                     final mLabel = '${int.parse(t.ym.substring(5, 7))}월';

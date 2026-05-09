@@ -147,7 +147,7 @@ class Api {
     await sb.from('budgets').insert(budgetsPayload);
     await sb.from('accounts').insert({
       'user_id': userId,
-      'name': '기본',
+      'name': '생활비',
       'type': 'checking',
       'sort_order': 0,
     });
@@ -1806,17 +1806,19 @@ class Api {
     invalidateCards();
   }
 
-  /// 사용자 default 계좌 ID. '기본' 우선, 없으면 첫 활성 계좌.
-  /// 호출부가 accountId를 명시 안 했을 때 자동 fallback 용도.
+  /// 사용자 default 계좌 ID. '생활비'(현재 시드) 또는 '기본'(옛 시드) 우선,
+  /// 없으면 첫 활성 계좌. 호출부가 accountId를 명시 안 했을 때 자동 fallback.
   /// 한 번 조회 후 캐시 — invalidateAccounts/invalidateAllCaches에서 비움.
   Future<int> _defaultAccountId() async {
     final cached = _defaultAccountIdCache;
     if (cached != null) return cached;
     final byName = await sb
         .from('accounts')
-        .select('id')
-        .eq('name', '기본')
+        .select('id, name')
+        .inFilter('name', ['생활비', '기본'])
         .eq('active', 1)
+        .order('sort_order', ascending: true)
+        .limit(1)
         .maybeSingle();
     if (byName != null) {
       final id = (byName['id'] as num).toInt();

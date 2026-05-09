@@ -136,7 +136,7 @@ class _AiInsightCardState extends State<AiInsightCard> {
                   ),
                   SizedBox(width: 12),
                   Text(
-                    'AI가 거래 내역을 보고 있어요…',
+                    '거래 내역을 보고 있어요…',
                     style: TextStyle(color: AppColors.text2, fontSize: 13),
                   ),
                 ],

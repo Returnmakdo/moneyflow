@@ -7,6 +7,7 @@ import '../api/models.dart';
 import '../theme.dart';
 import '../utils/csv_parse.dart';
 import '../utils/nav_back.dart';
+import '../widgets/amount_field.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
 import 'accounts_screen.dart' show AccountEditor, CardEditor;
@@ -63,16 +64,24 @@ class _AiImportScreenState extends State<AiImportScreen> {
       setState(() {
         _cards = results[0] as List<CreditCard>;
         _accounts = results[1] as List<Account>;
-        // default: 카드가 있으면 카드 첫 번째, 없으면 계좌 첫 번째.
-        if (_cards.isNotEmpty) {
-          _payKind = 'card';
+        // 신용카드 전용 — 카드가 있으면 첫 카드 선택, 0개면 _filePhase에서 추가 유도.
+        // _accounts는 카드 추가(연동 계좌 선택) 시에만 사용.
+        _payKind = 'card';
+        if (_cards.isEmpty) {
+          _selectedCardId = null;
+        } else if (!_cards.any((c) => c.id == _selectedCardId)) {
           _selectedCardId = _cards.first.id;
-        } else if (_accounts.isNotEmpty) {
-          _payKind = 'account';
-          _selectedAccountId = _accounts.first.id;
         }
       });
-    } catch (_) {/* 무시 — 결제수단 미선택 시 default 계좌로 fallback */}
+    } catch (_) {/* 무시 */}
+  }
+
+  CreditCard? _selectedCardOrNull() {
+    if (_selectedCardId == null) return null;
+    for (final c in _cards) {
+      if (c.id == _selectedCardId) return c;
+    }
+    return null;
   }
 
   /// 기술적 에러 메시지를 사용자가 알아들을 수 있게 매핑.
@@ -196,7 +205,7 @@ class _AiImportScreenState extends State<AiImportScreen> {
         } else {
           setState(() {
             _busy = true;
-            _busyText = 'AI 서버에서 시트를 변환하고 있어요…';
+            _busyText = '시트를 변환하고 있어요…';
           });
           final r = await Api.instance.parseSheetFile(bytes);
           parsed = CsvFile(headers: r.headers, rows: r.rows);
@@ -205,7 +214,7 @@ class _AiImportScreenState extends State<AiImportScreen> {
         // .xls(BIFF) 구버전은 무조건 서버 변환.
         setState(() {
           _busy = true;
-          _busyText = 'AI 서버에서 .xls를 변환하고 있어요…';
+          _busyText = '.xls를 변환하고 있어요…';
         });
         final r = await Api.instance.parseSheetFile(bytes);
         parsed = CsvFile(headers: r.headers, rows: r.rows);
@@ -240,7 +249,7 @@ class _AiImportScreenState extends State<AiImportScreen> {
     if (csv == null) return;
     setState(() {
       _busy = true;
-      _busyText = 'AI가 컬럼을 분석하고 있어요…';
+      _busyText = '컬럼을 분석하고 있어요…';
       _error = null;
     });
     try {
@@ -376,7 +385,7 @@ class _AiImportScreenState extends State<AiImportScreen> {
 
     setState(() {
       _busy = true;
-      _busyText = 'AI가 가맹점을 분류하고 있어요…';
+      _busyText = '가맹점을 분류하고 있어요…';
       _error = null;
       _normalized = rows;
       _skippedRowIndexes = skipped;
@@ -475,17 +484,16 @@ class _AiImportScreenState extends State<AiImportScreen> {
   }
 
   Widget _paymentSelector({bool allowToggle = false}) {
+    // allowToggle 인자는 과거 [신용카드/내 계좌] 토글 잔재. 신용카드 전용으로
+    // 좁혀지면서 의미 없어졌고, 호환을 위해 시그니처만 유지.
     final hasCards = _cards.isNotEmpty;
-    final hasAccounts = _accounts.isNotEmpty;
-    final isCard = _payKind == 'card';
-    final dataMissing = (isCard && !hasCards) || (!isCard && !hasAccounts);
     return AppCard(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '이 명세서는 어디서 결제됐어요?',
+            '어느 카드의 명세서예요?',
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w700,
@@ -495,97 +503,35 @@ class _AiImportScreenState extends State<AiImportScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            '선택한 결제수단으로 모든 거래가 등록돼요.',
+            '선택한 카드로 모든 거래가 등록돼요.',
             style: TextStyle(fontSize: 12, color: AppColors.text3),
           ),
           const SizedBox(height: 12),
-          if (allowToggle)
-            Row(
-              children: [
-                Expanded(
-                  child: _PayKindBtn(
-                    label: '신용카드',
-                    selected: _payKind == 'card',
-                    onTap: () => setState(() {
-                      _payKind = 'card';
-                      if (hasCards && _selectedCardId == null) {
-                        _selectedCardId = _cards.first.id;
-                      }
-                    }),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _PayKindBtn(
-                    label: '내 계좌',
-                    selected: _payKind == 'account',
-                    onTap: () => setState(() {
-                      _payKind = 'account';
-                      if (hasAccounts && _selectedAccountId == null) {
-                        _selectedAccountId = _accounts.first.id;
-                      }
-                    }),
-                  ),
-                ),
-              ],
-            )
-          else
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.primaryWeak,
-                borderRadius: BorderRadius.circular(AppRadius.sm),
-              ),
-              child: Text(
-                isCard ? '신용카드 명세서' : '입출금 거래내역',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primaryStrong,
-                ),
-              ),
-            ),
-          const SizedBox(height: 12),
-          if (dataMissing)
+          if (!hasCards)
             _MissingDataPrompt(
-              isCard: isCard,
-              onAdd: () => _addInline(isCard: isCard),
+              isCard: true,
+              onAdd: () => _addInline(isCard: true),
             )
           else
             Row(
               children: [
                 Expanded(
-                  child: isCard
-                      ? AppDropdown<int>(
-                          label: '카드',
-                          value: _cards.any((c) => c.id == _selectedCardId)
-                              ? _selectedCardId
-                              : null,
-                          items: [
-                            for (final c in _cards)
-                              AppDropdownItem(value: c.id, label: c.name),
-                          ],
-                          onChanged: (v) =>
-                              setState(() => _selectedCardId = v),
-                        )
-                      : AppDropdown<int>(
-                          label: '계좌',
-                          value: _accounts
-                                  .any((a) => a.id == _selectedAccountId)
-                              ? _selectedAccountId
-                              : null,
-                          items: [
-                            for (final a in _accounts)
-                              AppDropdownItem(value: a.id, label: a.name),
-                          ],
-                          onChanged: (v) =>
-                              setState(() => _selectedAccountId = v),
-                        ),
+                  child: AppDropdown<int>(
+                    label: '카드',
+                    value: _cards.any((c) => c.id == _selectedCardId)
+                        ? _selectedCardId
+                        : null,
+                    items: [
+                      for (final c in _cards)
+                        AppDropdownItem(value: c.id, label: c.name),
+                    ],
+                    onChanged: (v) => setState(() => _selectedCardId = v),
+                  ),
                 ),
                 const SizedBox(width: 8),
                 _AddInlineBtn(
-                  tooltip: isCard ? '카드 추가' : '계좌 추가',
-                  onTap: () => _addInline(isCard: isCard),
+                  tooltip: '카드 추가',
+                  onTap: () => _addInline(isCard: true),
                 ),
               ],
             ),
@@ -597,47 +543,121 @@ class _AiImportScreenState extends State<AiImportScreen> {
   Future<void> _import() async {
     final rows = _normalized;
     if (rows == null || rows.isEmpty) return;
-    // 카드 모드인데 카드 미선택, 계좌 모드인데 계좌 미선택은 막음.
-    if (_payKind == 'card' && _selectedCardId == null) {
+    final card = _selectedCardOrNull();
+    if (card == null) {
       showToast(context, '카드를 선택해주세요', error: true);
       return;
     }
-    if (_payKind == 'account' && _selectedAccountId == null) {
-      showToast(context, '계좌를 선택해주세요', error: true);
+    if (card.statementCloseDay == null) {
+      // 진입 단계에서 차단되지만 안전망.
+      showToast(context, '카드 사용 마감일이 비어있어요', error: true);
       return;
     }
-    final useCard = _payKind == 'card';
+
+    // 분류 결과 적용한 finalRows.
+    final finalRows = <ImportRow>[];
+    for (final r in rows) {
+      final m = r.merchant;
+      final cls = m != null ? _classByMerchant[m] : null;
+      finalRows.add(ImportRow(
+        date: r.date,
+        amount: r.amount,
+        majorCategory: cls?.major ?? r.majorCategory,
+        subCategory: cls?.sub,
+        // 결제수단 일괄 적용 — free-text card 필드는 비움.
+        card: null,
+        merchant: r.merchant,
+        memo: r.memo,
+        isFixed: false,
+        cardId: card.id,
+        accountId: null,
+      ));
+    }
+
+    // 옛 사이클 식별.
+    final today = DateTime.now();
+    final pastCycles = _identifyPastCycles(
+      rows: finalRows,
+      card: card,
+      today: today,
+    );
+
+    // 옛 사이클이 있으면 자동 정리 다이얼로그.
+    _PastCycleResult? settleResult;
+    AccountBalance? linkedBalance;
+    if (pastCycles.isNotEmpty) {
+      try {
+        final snap = await Api.instance.getAssetSnapshot();
+        for (final a in snap.accounts) {
+          if (a.accountId == card.linkedAccountId) {
+            linkedBalance = a;
+            break;
+          }
+        }
+      } catch (e) {
+        if (mounted) showToast(context, _friendlyError(e), error: true);
+        return;
+      }
+      if (!mounted) return;
+      if (linkedBalance == null) {
+        showToast(context, '카드 연동 계좌 정보를 찾을 수 없어요', error: true);
+        return;
+      }
+      settleResult = await _showPastCycleDialog(
+        card: card,
+        linkedAccount: linkedBalance,
+        cycles: pastCycles,
+      );
+      if (settleResult == null) return; // 사용자가 다이얼로그 취소.
+    }
+
     setState(() => _importing = true);
     try {
-      final finalRows = <ImportRow>[];
-      for (final r in rows) {
-        final m = r.merchant;
-        final cls = m != null ? _classByMerchant[m] : null;
-        finalRows.add(ImportRow(
-          date: r.date,
-          amount: r.amount,
-          majorCategory: cls?.major ?? r.majorCategory,
-          subCategory: cls?.sub,
-          // 결제수단 일괄 적용 — free-text card 필드는 비움.
-          card: null,
-          merchant: r.merchant,
-          memo: r.memo,
-          isFixed: false,
-          cardId: useCard ? _selectedCardId : null,
-          accountId: useCard ? null : _selectedAccountId,
-        ));
-      }
+      // 1) 카드 사용 거래 일괄 등록.
       final n = await Api.instance.importTransactions(finalRows);
+
+      // 2) 옛 사이클 자동 결제 처리.
+      int settledCount = 0;
+      int settledSum = 0;
+      if (settleResult?.autoSettle == true && pastCycles.isNotEmpty) {
+        for (final cycle in pastCycles) {
+          await Api.instance.createTransaction(
+            date: cycle.paymentDate,
+            amount: cycle.totalAmount,
+            majorCategory: '카드결제',
+            merchant: card.name,
+            memo: 'CSV 가져오기 자동 정리',
+            fromAccountId: card.linkedAccountId,
+            cardId: card.id,
+            type: 'card_payment',
+          );
+          settledCount++;
+          settledSum += cycle.totalAmount;
+        }
+
+        // 3) 연동 통장 시작잔고 보정.
+        // 사용자가 만족시키길 원함: import 후 통장 잔고 = 사용자 입력값
+        // 새 시작잔고 = 기존 시작잔고 + (사용자 입력 - 기존 잔고) + 옛 결제 합
+        final input = settleResult!.currentBalance!;
+        final newInitial = linkedBalance!.initialBalance +
+            (input - linkedBalance.balance) +
+            settledSum;
+        await Api.instance.updateAccount(
+          linkedBalance.accountId,
+          initialBalance: newInitial,
+        );
+      }
+
       if (!mounted) return;
-      // 등록 완료 → 대시보드로 이동하면서 토스트로 알림.
-      // SnackBar는 mount된 ScaffoldMessenger에 즉시 push되므로 화면 전환 후에도
-      // 잠깐 보임 (ScaffoldMessenger가 root에 있으면).
+      final msg = settledCount > 0
+          ? '거래 $n건과 옛 결제 $settledCount건을 등록했어요. 통장 시작잔고도 맞춰뒀어요'
+          : '거래 $n건이 등록됐어요. 대시보드에서 확인해보세요';
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(
-          content: Text('거래 $n건이 등록됐어요. 대시보드에서 확인해보세요'),
+          content: Text(msg),
           backgroundColor: AppColors.success,
-          duration: const Duration(seconds: 3),
+          duration: const Duration(seconds: 4),
         ));
       context.go('/dashboard');
     } catch (e) {
@@ -645,6 +665,241 @@ class _AiImportScreenState extends State<AiImportScreen> {
     } finally {
       if (mounted) setState(() => _importing = false);
     }
+  }
+
+  /// 옛 사이클 자동 정리 다이얼로그.
+  /// 결과: null=닫기(import 취소), autoSettle=false=사용만 등록, autoSettle=true=자동 정리.
+  Future<_PastCycleResult?> _showPastCycleDialog({
+    required CreditCard card,
+    required AccountBalance linkedAccount,
+    required List<_PastCycle> cycles,
+  }) async {
+    // 현재 잔고가 있으면 미리 채워둠. 사용자가 그대로 두거나 수정 가능.
+    final ctrl = TextEditingController(
+      text: linkedAccount.balance > 0 ? won(linkedAccount.balance) : '',
+    );
+    String error = '';
+    bool busy = false;
+
+    final totalSum = cycles.fold<int>(0, (s, c) => s + c.totalAmount);
+
+    return showDialog<_PastCycleResult>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            void submit() {
+              final raw = ctrl.text.replaceAll(RegExp(r'[,\s원]'), '');
+              final v = int.tryParse(raw);
+              if (v == null || v < 0) {
+                setLocal(() => error = '숫자로 입력해주세요');
+                return;
+              }
+              setLocal(() => busy = true);
+              Navigator.of(ctx).pop(
+                _PastCycleResult(autoSettle: true, currentBalance: v),
+              );
+            }
+
+            return AlertDialog(
+              backgroundColor: AppColors.surface,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+              ),
+              titlePadding: const EdgeInsets.fromLTRB(20, 14, 8, 4),
+              contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              actionsPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              title: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        '옛 결제까지 등록해야\n자산이 정확해요',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.text,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    color: AppColors.text3,
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                    tooltip: '닫기',
+                    onPressed:
+                        busy ? null : () => Navigator.of(ctx).pop(null),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 1) 왜 필요한지 — 먼저 보여줌.
+                    Text(
+                      '카드 사용만 등록하면 옛 결제일에 통장에서 빠졌어야 할 돈이 그대로 남아 있어요. '
+                      '결제 거래도 함께 만들면 자산이 깔끔하게 맞아 떨어져요.',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: AppColors.text2,
+                        height: 1.6,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    // 2) 정리할 사이클 목록.
+                    Text(
+                      '정리할 사이클 ${cycles.length}개',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.text3,
+                        letterSpacing: 0.3,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface2,
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final c in cycles)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    '${c.paymentDate} 결제',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      color: AppColors.text2,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures()
+                                      ],
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    '${won(c.totalAmount)}원',
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.text,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures()
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          const SizedBox(height: 4),
+                          Divider(color: AppColors.line2, height: 8),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Text(
+                                '합계',
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.text,
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                '${won(totalSum)}원',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.primaryStrong,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures()
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // 3) 잔고 입력 — 왜 필요한지 짧게 + 입력.
+                    Text(
+                      '지금 ${linkedAccount.name}(통장)에 얼마 들어있나요?',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.text,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      linkedAccount.balance > 0
+                          ? '이미 등록된 잔고를 미리 채워뒀어요. 맞으면 그대로 두시고, 다르면 수정해주세요.'
+                          : '옛 결제만큼 통장에서 빠지면 시작잔고를 그 시점 기준으로 자동 보정해드릴게요.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: AppColors.text3,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    AmountField(
+                      controller: ctrl,
+                      label: '${linkedAccount.name}(통장) 현재 잔고',
+                    ),
+                    if (error.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        error,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.danger,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: busy
+                      ? null
+                      : () => Navigator.of(ctx).pop(
+                            const _PastCycleResult(autoSettle: false),
+                          ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.text2,
+                  ),
+                  child: const Text('사용만 등록'),
+                ),
+                FilledButton(
+                  onPressed: busy ? null : submit,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, 38),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                  ),
+                  child: const Text('자동 정리'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   void _restart() {
@@ -673,13 +928,23 @@ class _AiImportScreenState extends State<AiImportScreen> {
           icon: Icon(Icons.arrow_back, color: AppColors.text2),
           onPressed: () => goBackOr(context, '/settings/import'),
         ),
-        title: Text(
-          'AI로 카드사 CSV 정리',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: AppColors.text,
-          ),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                'AI로 신용카드 명세서 정리',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.text,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Pill(label: 'BETA'),
+          ],
         ),
         centerTitle: false,
       ),
@@ -711,119 +976,171 @@ class _AiImportScreenState extends State<AiImportScreen> {
 
   Widget _filePhase() {
     final ready = _isPaymentReady();
+    final selected = _selectedCardOrNull();
+    final missingCloseDay =
+        selected != null && selected.statementCloseDay == null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _paymentSelector(allowToggle: true),
-        const SizedBox(height: 12),
-        AppCard(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        _paymentSelector(allowToggle: false),
+        if (missingCloseDay) ...[
+          const SizedBox(height: 12),
+          _missingCloseDayCard(selected),
+        ],
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: ready ? _pickFile : null,
+          icon: const Icon(Icons.folder_open, size: 20),
+          label: Text(_pickButtonLabel(ready, missingCloseDay)),
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(double.infinity, 56),
+            textStyle: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        _helpExpansion(),
+      ],
+    );
+  }
+
+  /// 부가 안내(지원 파일·한글 인코딩 등)는 평소엔 숨기고 펼쳐서 보기.
+  Widget _helpExpansion() {
+    return Theme(
+      data: Theme.of(context).copyWith(
+        dividerColor: Colors.transparent,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+      ),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 6),
+        childrenPadding: const EdgeInsets.fromLTRB(6, 0, 6, 12),
+        iconColor: AppColors.text3,
+        collapsedIconColor: AppColors.text3,
+        title: Text(
+          '어떤 파일을 올리면 돼요?',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AppColors.text3,
+          ),
+        ),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '·  카드사에서 받은 이용내역(.csv·.xls·.xlsx)을 그대로 올리면 돼요\n'
+              '·  컬럼 매핑·카테고리 분류는 AI가 추정해서 미리보기로 보여드려요\n'
+              '·  한글이 깨져 보이면 엑셀에서 "CSV UTF-8"로 다시 저장해주세요',
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.text3,
+                height: 1.65,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _isPaymentReady() {
+    final c = _selectedCardOrNull();
+    if (c == null) return false;
+    // 사용 마감일 없으면 결제 사이클 구분 못 해서 자산 꼬일 수 있음 — 차단.
+    return c.statementCloseDay != null;
+  }
+
+  String _pickButtonLabel(bool ready, bool missingCloseDay) {
+    if (ready) return '명세서 파일 선택';
+    if (_cards.isEmpty) return '먼저 신용카드를 추가해주세요';
+    if (missingCloseDay) return '먼저 사용 마감일을 등록해주세요';
+    return '먼저 카드를 골라주세요';
+  }
+
+  /// 선택된 카드의 사용 마감일이 비어있을 때 — 등록 유도 카드.
+  /// 마감일 없이 명세서를 등록하면 이번 달/다음 달 결제 사이클을 구분 못 해서
+  /// 자산이 꼬일 수 있어 막아둠.
+  Widget _missingCloseDayCard(CreditCard card) {
+    return AppCard(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryWeak,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(Icons.auto_awesome,
-                        size: 18, color: AppColors.primary),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'AI가 카드사 CSV 양식을 자동으로 정리해요',
-                      style: TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.text,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                '카드사에서 다운받은 이용내역을 그대로 올리면, '
-                '컬럼 매핑부터 카테고리 분류까지 AI가 추정해드려요. '
-                '미리보기에서 확인 후 등록할 수 있어요.',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: AppColors.text2,
-                  height: 1.55,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFF4D6),
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.info_outline,
-                        size: 14, color: const Color(0xFF8A6A00)),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        '은행 거래내역(입출금이 분리된 양식)은 아직 지원 안 해요. 카드 명세서만 올려주세요.',
-                        style: const TextStyle(
-                          fontSize: 11.5,
-                          color: Color(0xFF8A6A00),
-                          height: 1.5,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: ready ? _pickFile : null,
-                icon: const Icon(Icons.folder_open, size: 18),
-                label: Text(ready ? '명세서 파일 선택' : '먼저 결제수단을 골라주세요'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 44),
-                  textStyle: const TextStyle(
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppColors.surface2,
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                ),
+              Icon(Icons.warning_amber_rounded,
+                  size: 18, color: AppColors.warning),
+              const SizedBox(width: 8),
+              Expanded(
                 child: Text(
-                  '·  .xls 구버전도 그대로 올리면 서버에서 자동으로 변환해드려요.\n'
-                  '·  CSV가 EUC-KR(CP949)이면 한글이 깨질 수 있어요. 엑셀에서 "CSV UTF-8(쉼표로 분리)"로 다시 저장하면 정확해요.',
+                  '${card.name}의 사용 마감일이 비어있어요',
                   style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.text3,
-                    height: 1.6,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.text,
                   ),
                 ),
               ),
             ],
           ),
-        ),
-      ],
+          const SizedBox(height: 8),
+          Text(
+            '마감일이 없으면 이번 달/다음 달 결제 사이클을 구분 못 해서 자산이 꼬일 수 있어요. '
+            '카드 명세서 첫 페이지에 적힌 사용 마감일을 등록해주세요.',
+            style: TextStyle(
+              fontSize: 12.5,
+              color: AppColors.text2,
+              height: 1.55,
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () => _editCard(card),
+            icon: const Icon(Icons.edit_calendar_outlined, size: 16),
+            label: const Text('마감일 등록하기'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  bool _isPaymentReady() {
-    if (_payKind == 'card') return _selectedCardId != null;
-    return _selectedAccountId != null;
+  /// 선택된 카드를 CardEditor로 띄워서 수정 (주로 마감일 입력용).
+  Future<void> _editCard(CreditCard card) async {
+    if (_accounts.isEmpty) {
+      // 카드 등록되어 있는데 계좌 없는 케이스는 사실상 X. 안전망.
+      showToast(context, '연동 계좌 정보를 불러올 수 없어요', error: true);
+      return;
+    }
+    final accBalances = [
+      for (final a in _accounts)
+        AccountBalance(
+          accountId: a.id,
+          name: a.name,
+          type: a.type,
+          initialBalance: a.initialBalance,
+          balance: a.initialBalance,
+          active: a.active,
+        ),
+    ];
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppRadius.xl),
+        ),
+      ),
+      builder: (_) => CardEditor(existing: card, accounts: accBalances),
+    );
+    if (saved == true) await _loadPaymentOptions();
   }
 
   /// 카드 또는 계좌가 없을 때 inline 추가 — 자산 탭의 editor를 그대로 사용.
@@ -889,6 +1206,8 @@ class _AiImportScreenState extends State<AiImportScreen> {
 
   Widget _mappingPhase() {
     final m = _mapping!;
+    // 카드 명세서가 아니라고 판단된 양식이면(통장 거래내역 등) 차단 화면.
+    if (m.unsupportedKind == 'bank') return _unsupportedBankPhase();
     final eff = _effectiveCsv();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1000,6 +1319,204 @@ class _AiImportScreenState extends State<AiImportScreen> {
           ],
         ),
       ],
+    );
+  }
+
+  /// 통장 거래내역 등 카드 명세서가 아닌 양식이 들어왔을 때.
+  /// 자동 분류가 위험한 이유 + 대안 가이드 + 다시 파일 선택 버튼.
+  Widget _unsupportedBankPhase() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppCard(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF1F2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.account_balance_outlined,
+                        size: 18, color: AppColors.danger),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      '통장 거래내역은 AI 정리에서 빼뒀어요',
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.text,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'AI CSV 정리는 신용/체크카드 명세서 전용이에요. '
+                '통장 거래내역은 자동으로 정리하기 어려운 함정이 많아서요.',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: AppColors.text2,
+                  height: 1.55,
+                ),
+              ),
+              const SizedBox(height: 14),
+              _bullet('A 통장에서 B 통장으로 옮긴 돈이 지출+수입 양쪽으로 잡혀요'),
+              _bullet('카드 결제대금이 이미 카드 명세서로 들어간 거랑 겹쳐서 두 번 빠져요'),
+              _bullet('친구한테 보낸 돈 / 받은 돈을 자동으로 구분하기 어려워요'),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                decoration: BoxDecoration(
+                  color: AppColors.primaryWeak,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.lightbulb_outline,
+                            size: 16, color: AppColors.primaryStrong),
+                        const SizedBox(width: 6),
+                        Text(
+                          '이렇게 해보세요',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primaryStrong,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    _howRow(
+                      '카드 사용은',
+                      '카드사 명세서를 여기에 그대로 올려주세요',
+                    ),
+                    _howRow(
+                      '카드 결제대금은',
+                      '자산 탭의 결제일 안내에서 등록하면 통장도 같이 처리돼요',
+                    ),
+                    _howRow(
+                      '월급은',
+                      '설정 → 정기 거래에 등록하면 매달 자동 입금 처리',
+                    ),
+                    _howRow(
+                      '통장 시작 잔액은',
+                      '자산 탭에서 계좌 시작잔고로 직접 입력',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _restart,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.text2,
+                        side: BorderSide(color: AppColors.line),
+                        minimumSize: const Size(0, 44),
+                      ),
+                      child: const Text('다른 파일 선택'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton(
+                      onPressed: () => goBackOr(context, '/settings/import'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 44),
+                        textStyle: const TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      child: const Text('확인했어요'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _bullet(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2, right: 8),
+            child: Container(
+              width: 4,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.text3,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12.5,
+                color: AppColors.text2,
+                height: 1.55,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _howRow(String label, String desc) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: AppColors.primaryStrong,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              desc,
+              style: TextStyle(
+                fontSize: 12.5,
+                color: AppColors.text,
+                height: 1.55,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1588,15 +2105,17 @@ class _ConfidencePill extends StatelessWidget {
   }
 }
 
-/// 카드/계좌 데이터 0개일 때 inline 추가 안내.
+/// 카드 데이터 0개일 때 inline 추가 안내.
 class _MissingDataPrompt extends StatelessWidget {
   const _MissingDataPrompt({required this.isCard, required this.onAdd});
+  // isCard 인자는 과거 [신용카드/내 계좌] 토글 잔재. 신용카드 전용으로
+  // 좁혀지면서 항상 true.
   final bool isCard;
   final VoidCallback onAdd;
 
   @override
   Widget build(BuildContext context) {
-    final label = isCard ? '신용카드' : '계좌';
+    const label = '신용카드';
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
@@ -1639,6 +2158,100 @@ class _MissingDataPrompt extends StatelessWidget {
   }
 }
 
+/// 카드 마감일 기준 사이클 정보. 결제일이 오늘 이전이면 옛 사이클로 분류.
+class _PastCycle {
+  final String paymentDate; // YYYY-MM-DD
+  final int totalAmount; // 그 사이클 사용 합계
+  final List<ImportRow> rows; // 그 사이클 사용 거래들 (참고)
+  const _PastCycle({
+    required this.paymentDate,
+    required this.totalAmount,
+    required this.rows,
+  });
+}
+
+/// 옛 사이클 다이얼로그 결과.
+class _PastCycleResult {
+  final bool autoSettle; // true면 옛 결제 거래 + 시작잔고 자동 보정
+  final int? currentBalance; // autoSettle=true일 때 사용자가 입력한 통장 잔고
+  const _PastCycleResult({required this.autoSettle, this.currentBalance});
+}
+
+/// 사용일이 어느 결제일에 청구될지 계산.
+/// - 사용일이 그 달 마감일 이하 → 그 달 결제일
+/// - 마감일 초과 → 다음 달 결제일
+/// - 마감일/결제일이 그 달 말일보다 크면 말일로 클램프 (31일 결제일인 2월 등)
+DateTime _paymentDateForUsage({
+  required DateTime usageDate,
+  required int closeDay,
+  required int paymentDay,
+}) {
+  final lastDayOfUsageMonth =
+      DateTime(usageDate.year, usageDate.month + 1, 0).day;
+  final effectiveCloseDay =
+      closeDay > lastDayOfUsageMonth ? lastDayOfUsageMonth : closeDay;
+
+  int year = usageDate.year;
+  int month = usageDate.month;
+  if (usageDate.day > effectiveCloseDay) {
+    month += 1;
+    if (month > 12) {
+      year += 1;
+      month = 1;
+    }
+  }
+  final lastDayOfPaymentMonth = DateTime(year, month + 1, 0).day;
+  final effectivePaymentDay =
+      paymentDay > lastDayOfPaymentMonth ? lastDayOfPaymentMonth : paymentDay;
+  return DateTime(year, month, effectivePaymentDay);
+}
+
+/// import row들을 카드 마감일 기준으로 사이클별로 묶고,
+/// 결제일이 오늘 이전인 옛 사이클만 반환. 결제일 오름차순.
+List<_PastCycle> _identifyPastCycles({
+  required List<ImportRow> rows,
+  required CreditCard card,
+  required DateTime today,
+}) {
+  if (card.statementCloseDay == null) return [];
+  final closeDay = card.statementCloseDay!;
+  final paymentDay = card.paymentDay;
+
+  final groups = <String, List<ImportRow>>{};
+  final paymentDateByKey = <String, DateTime>{};
+
+  for (final r in rows) {
+    final usageDate = DateTime.tryParse(r.date);
+    if (usageDate == null) continue;
+    final pDate = _paymentDateForUsage(
+      usageDate: usageDate,
+      closeDay: closeDay,
+      paymentDay: paymentDay,
+    );
+    final key = '${pDate.year}-'
+        '${pDate.month.toString().padLeft(2, '0')}-'
+        '${pDate.day.toString().padLeft(2, '0')}';
+    groups.putIfAbsent(key, () => []).add(r);
+    paymentDateByKey[key] = pDate;
+  }
+
+  final result = <_PastCycle>[];
+  final todayDate = DateTime(today.year, today.month, today.day);
+  for (final entry in groups.entries) {
+    final pDate = paymentDateByKey[entry.key]!;
+    if (pDate.isBefore(todayDate)) {
+      final total = entry.value.fold<int>(0, (s, r) => s + r.amount);
+      result.add(_PastCycle(
+        paymentDate: entry.key,
+        totalAmount: total,
+        rows: entry.value,
+      ));
+    }
+  }
+  result.sort((a, b) => a.paymentDate.compareTo(b.paymentDate));
+  return result;
+}
+
 /// dropdown 옆 + 버튼 — 카드/계좌를 그 자리에서 추가.
 class _AddInlineBtn extends StatelessWidget {
   const _AddInlineBtn({required this.tooltip, required this.onTap});
@@ -1671,54 +2284,3 @@ class _AddInlineBtn extends StatelessWidget {
   }
 }
 
-/// AI import 결제수단 토글 — [신용카드] / [내 계좌].
-class _PayKindBtn extends StatelessWidget {
-  const _PayKindBtn({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-  final String label;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final disabled = onTap == null;
-    final fg = disabled
-        ? AppColors.text4
-        : (selected ? AppColors.primaryStrong : AppColors.text2);
-    final bg = disabled
-        ? AppColors.surface2
-        : (selected ? AppColors.primaryWeak : AppColors.surface2);
-    final border =
-        selected && !disabled ? AppColors.primary : AppColors.line;
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(AppRadius.sm),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: border,
-              width: selected && !disabled ? 1.2 : 1,
-            ),
-            borderRadius: BorderRadius.circular(AppRadius.sm),
-          ),
-          padding: const EdgeInsets.symmetric(vertical: 11),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 13.5,
-              fontWeight: FontWeight.w700,
-              color: fg,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

@@ -538,6 +538,8 @@ class CsvMapping {
   final String amountSign; // "positive" | "negative" | "absolute"
   final String confidence; // "high" | "medium" | "low"
   final String note;
+  // 카드 명세서가 아니라고 판단된 양식. "bank"면 통장 거래내역 — 차단.
+  final String? unsupportedKind;
   const CsvMapping({
     this.headerRowIndex = 0,
     required this.dateCol,
@@ -551,26 +553,32 @@ class CsvMapping {
     required this.amountSign,
     required this.confidence,
     required this.note,
+    this.unsupportedKind,
   });
 
-  factory CsvMapping.fromJson(Map<String, dynamic> j) => CsvMapping(
-        headerRowIndex: (j['headerRowIndex'] as num?)?.toInt() ?? 0,
-        dateCol: (j['dateCol'] as num).toInt(),
-        amountCol: (j['amountCol'] as num).toInt(),
-        merchantCol: (j['merchantCol'] as num).toInt(),
-        cardCol: (j['cardCol'] as num?)?.toInt(),
-        memoCol: (j['memoCol'] as num?)?.toInt(),
-        statusCol: (j['statusCol'] as num?)?.toInt(),
-        excludedStatuses: (j['excludedStatuses'] as List?)
-                ?.map((e) => e?.toString().trim() ?? '')
-                .where((s) => s.isNotEmpty)
-                .toList() ??
-            const [],
-        dateFormat: (j['dateFormat'] as String?) ?? 'auto',
-        amountSign: (j['amountSign'] as String?) ?? 'absolute',
-        confidence: (j['confidence'] as String?) ?? 'medium',
-        note: (j['note'] as String?) ?? '',
-      );
+  factory CsvMapping.fromJson(Map<String, dynamic> j) {
+    final unsup = (j['unsupportedKind'] as String?)?.trim();
+    return CsvMapping(
+      headerRowIndex: (j['headerRowIndex'] as num?)?.toInt() ?? 0,
+      // 차단 응답일 땐 dateCol/amountCol/merchantCol이 dummy 0으로 와도 무방.
+      dateCol: (j['dateCol'] as num?)?.toInt() ?? 0,
+      amountCol: (j['amountCol'] as num?)?.toInt() ?? 0,
+      merchantCol: (j['merchantCol'] as num?)?.toInt() ?? 0,
+      cardCol: (j['cardCol'] as num?)?.toInt(),
+      memoCol: (j['memoCol'] as num?)?.toInt(),
+      statusCol: (j['statusCol'] as num?)?.toInt(),
+      excludedStatuses: (j['excludedStatuses'] as List?)
+              ?.map((e) => e?.toString().trim() ?? '')
+              .where((s) => s.isNotEmpty)
+              .toList() ??
+          const [],
+      dateFormat: (j['dateFormat'] as String?) ?? 'auto',
+      amountSign: (j['amountSign'] as String?) ?? 'absolute',
+      confidence: (j['confidence'] as String?) ?? 'medium',
+      note: (j['note'] as String?) ?? '',
+      unsupportedKind: (unsup == null || unsup.isEmpty) ? null : unsup,
+    );
+  }
 }
 
 /// 가맹점 한 건 분류 결과.

@@ -880,6 +880,8 @@ class CardEditorState extends State<CardEditor> {
   late int _paymentDay;
   late int _linkedAccountId;
   int? _statementCloseDay;
+  // BottomSheet 안에서 SnackBar는 모달에 가려져서, 마감일 검증은 inline으로.
+  bool _closeDayError = false;
   bool _saving = false;
 
   bool get _isEdit => widget.existing != null;
@@ -904,6 +906,10 @@ class CardEditorState extends State<CardEditor> {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
       showToast(context, '카드 이름을 입력해주세요', error: true);
+      return;
+    }
+    if (_statementCloseDay == null) {
+      setState(() => _closeDayError = true);
       return;
     }
     setState(() => _saving = true);
@@ -1000,25 +1006,30 @@ class CardEditorState extends State<CardEditor> {
               ),
               const SizedBox(height: 12),
               AppDropdown<int>(
-                label: '사용 마감일 (선택)',
-                value: _statementCloseDay ?? 0,
+                label: '사용 마감일 (매월)',
+                value: _statementCloseDay,
                 items: [
-                  const AppDropdownItem(value: 0, label: '모름'),
                   for (var d = 1; d <= 31; d++)
                     AppDropdownItem(value: d, label: '$d일'),
                 ],
-                onChanged: (v) =>
-                    setState(() => _statementCloseDay = v == 0 ? null : v),
+                onChanged: (v) => setState(() {
+                  _statementCloseDay = v;
+                  _closeDayError = false;
+                }),
               ),
               const SizedBox(height: 6),
-              Text(
-                '이 날 이후 사용분은 다음 달 결제로 넘어가요. 모르면 비워둬도 돼요.',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: AppColors.text3,
-                  height: 1.5,
-                ),
-              ),
+              if (_closeDayError)
+                Text(
+                  '사용 마감일을 골라주세요',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: AppColors.danger,
+                    fontWeight: FontWeight.w600,
+                    height: 1.5,
+                  ),
+                )
+              else
+                _closeDayHelp(),
               const SizedBox(height: 22),
               FilledButton(
                 onPressed: _saving ? null : _save,
@@ -1035,6 +1046,61 @@ class CardEditorState extends State<CardEditor> {
           ),
         ),
       ),
+    );
+  }
+
+  /// 사용 마감일 안내 + 처음 사용자를 위한 펼치기 가이드.
+  Widget _closeDayHelp() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '이 날 이후 사용분은 다음 달 결제로 넘어가요.',
+          style: TextStyle(
+            fontSize: 11.5,
+            color: AppColors.text3,
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Theme(
+          data: Theme.of(context).copyWith(
+            dividerColor: Colors.transparent,
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+          ),
+          child: ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            childrenPadding: const EdgeInsets.fromLTRB(2, 0, 2, 6),
+            iconColor: AppColors.text3,
+            collapsedIconColor: AppColors.text3,
+            visualDensity: VisualDensity.compact,
+            title: Text(
+              '마감일은 어디서 보나요?',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primary,
+              ),
+            ),
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '·  카드사 앱 → "결제예정금액" 또는 "이용내역" 화면\n'
+                  '·  종이 명세서 첫 페이지 (예: "OO/OO ~ OO/OO 사용분")\n'
+                  '·  카드사마다 달라요. 같은 카드사라도 카드 종류별로 다르니 본인 카드 명세서로 확인해주세요',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.text3,
+                    height: 1.65,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

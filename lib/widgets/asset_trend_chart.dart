@@ -87,6 +87,8 @@ class AssetTrendChart extends StatelessWidget {
               getTooltipColor: (_) => const Color(0xFF191F28),
               tooltipPadding:
                   const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              fitInsideHorizontally: true,
+              fitInsideVertically: true,
               getTooltipItems: (spots) => spots.map((s) {
                 final i = s.x.toInt();
                 final mLabel =

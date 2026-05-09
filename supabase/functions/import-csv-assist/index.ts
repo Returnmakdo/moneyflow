@@ -11,10 +11,16 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import Anthropic from "npm:@anthropic-ai/sdk@0.73.0";
 import * as XLSX from "npm:xlsx@0.18.5";
 
-const MAPPING_SYSTEM = `당신은 한국 카드사 명세서(이용내역) CSV·XLS 가져오기 보조입니다. 파일 상단 row들을 보고 (1) 진짜 헤더 row가 어디인지, (2) 어느 컬럼이 무엇인지 추정합니다.
+const MAPPING_SYSTEM = `당신은 한국 신용/체크카드 명세서(이용내역) CSV·XLS 가져오기 보조입니다. 파일 상단 row들을 보고 (1) 진짜 헤더 row가 어디인지, (2) 어느 컬럼이 무엇인지 추정합니다.
 
-지원 범위: 신용/체크카드 명세서 일반 (다양한 카드사 양식).
-미지원: 은행 거래내역(입출금 컬럼이 분리된 양식). 그런 양식이 들어오면 confidence를 "low"로, note에 "은행 거래내역 양식 같아요. 지원 안 해요."로 응답해도 됨.
+지원 범위: 신용/체크카드 명세서 전용 (모든 거래가 같은 방향=지출인 양식).
+미지원 (반드시 차단): 은행 통장 거래내역 — 입금·출금이 한 시트에 섞여 있어서 자동 분류 시 본인 계좌 간 이체나 카드 결제대금이 이중 카운트됨. 통장 양식이 의심되면 unsupportedKind를 "bank"로 응답 (다른 필드는 dummy 0/null로 채워도 됨).
+
+통장 양식 판별 신호 (하나라도 해당하면 unsupportedKind: "bank"):
+- "입금"·"출금"·"입금액"·"출금액"·"맡기신금액"·"찾으신금액" 같은 컬럼이 둘 다 또는 한 쪽이라도 헤더에 있음
+- "거래후잔액"·"잔액" 컬럼 (통장 거래내역의 특징, 카드 명세서엔 없음)
+- "이체"·"송금"·"자동이체" 키워드가 가맹점/적요 컬럼에 다수 등장
+- 양식 제목·시트명에 "거래내역"·"입출금"·"통장"·"예금" 단어 포함
 
 출력은 반드시 단일 JSON 객체만. 설명·마크다운·코드블록 X. 첫 글자가 { 로 시작하고 } 로 끝납니다.
 
@@ -31,7 +37,8 @@ JSON 스키마:
   "dateFormat": string,            // 추정 형식. 예: "YYYY-MM-DD" "YYYY/MM/DD" "YYYY.MM.DD" "YYYYMMDD" "YYYY년 MM월 DD일"
   "amountSign": string,            // "positive" | "negative" | "absolute" — 지출이 어떤 부호인지
   "confidence": string,            // "high" | "medium" | "low"
-  "note": string                   // 사용자에게 보여줄 한 줄 설명 (한국어)
+  "note": string,                  // 사용자에게 보여줄 한 줄 설명 (한국어)
+  "unsupportedKind": string | null // 카드 명세서가 아니라고 판단되면 "bank". 정상 카드 명세서는 null.
 }
 
 규칙:
@@ -40,7 +47,6 @@ JSON 스키마:
 - 진짜 헤더가 row 0이면 headerRowIndex: 0.
 - 흔한 헤더 컬럼명: "이용일자/거래일자/승인일자", "이용가맹점/가맹점명/이용처", "이용금액/승인금액/청구금액"
 - 청구금액과 이용금액이 둘 다 있으면 "이용금액"(실제 발생액) 우선
-- "입금" 컬럼이 별도로 있으면 무시 — 우리는 지출만 처리
 - **마스킹된 카드번호 컬럼(예: "5***-****-****-810*", "카드종류"라는 이름이지만 마스킹 번호인 경우)은 cardCol로 매핑하지 마세요**. cardCol은 "신한카드"/"카카오페이" 같은 결제수단 이름일 때만. 마스킹 번호면 cardCol: null.
 - 부호 추정: 데이터 row에 -가 일관적이면 negative, 그 외 positive 또는 absolute
 - 컬럼 인덱스는 0부터 시작 (헤더 row의 컬럼 순서)
@@ -58,12 +64,18 @@ JSON 스키마:
   row[1]: ["승인일", "가맹점명", "승인금액", "이용구분", "카드종류", "승인구분"]  ← 진짜 헤더
   row[2]: ["2026-04-25", "스타벅스", "5,800", "일시불", "신한카드", "전표접수"]  ← 정상
   row[3]: ["2026-04-25", "택시_가승인", "10,400", "일시불", "신한카드", "취소"]  ← 취소
-  → { "headerRowIndex": 1, "dateCol": 0, "merchantCol": 1, "amountCol": 2, "cardCol": 4, "memoCol": null, "statusCol": 5, "excludedStatuses": ["취소"], ... }
+  → { "headerRowIndex": 1, "dateCol": 0, "merchantCol": 1, "amountCol": 2, "cardCol": 4, "memoCol": null, "statusCol": 5, "excludedStatuses": ["취소"], "unsupportedKind": null, ... }
 
 예시 2 (헤더가 첫 줄, 상태 컬럼 없음):
   row[0]: ["거래일자", "가맹점", "이용금액"]
   row[1]: ["2026-04-25", "스타벅스", "5,800"]
-  → { "headerRowIndex": 0, "dateCol": 0, "merchantCol": 1, "amountCol": 2, "statusCol": null, "excludedStatuses": [], ... }
+  → { "headerRowIndex": 0, "dateCol": 0, "merchantCol": 1, "amountCol": 2, "statusCol": null, "excludedStatuses": [], "unsupportedKind": null, ... }
+
+예시 3 (통장 거래내역 차단):
+  row[0]: ["거래일자", "적요", "출금액", "입금액", "거래후잔액", "거래점"]
+  row[1]: ["2026-04-25", "스타벅스", "5,800", "", "1,234,200", "온라인"]
+  row[2]: ["2026-04-25", "월급", "", "3,500,000", "4,734,200", "회사"]
+  → { "unsupportedKind": "bank", "confidence": "low", "note": "통장 거래내역으로 보여요. AI 정리는 카드사 명세서 전용이에요.", "headerRowIndex": 0, "dateCol": 0, "amountCol": 0, "merchantCol": 0, "cardCol": null, "memoCol": null, "statusCol": null, "excludedStatuses": [], "dateFormat": "auto", "amountSign": "absolute" }
 
 note는 결정 근거 한 줄, 친근한 톤. 예: "승인일·가맹점명·승인금액으로 매핑했고, 취소된 거래는 자동으로 빼드릴게요"`;
 

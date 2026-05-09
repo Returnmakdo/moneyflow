@@ -481,17 +481,25 @@ class _ImportScreenState extends State<ImportScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'AI로 카드사 CSV 자동 정리',
-                      style: TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.text,
-                      ),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            'AI로 신용카드 명세서 자동 정리',
+                            style: TextStyle(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.text,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const Pill(label: 'BETA'),
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '카드사 이용내역을 그대로 올리면 카테고리까지 자동 분류',
+                      '신용카드 명세서를 그대로 올리면 카테고리까지 자동 분류',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppColors.text2,
