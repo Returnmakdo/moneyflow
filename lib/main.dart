@@ -27,6 +27,7 @@ import 'screens/spending_insights_screen.dart';
 import 'screens/transactions_screen.dart';
 import 'supabase.dart';
 import 'theme.dart';
+import 'utils/nav_back.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -115,47 +116,77 @@ class _BudgetAppState extends State<BudgetApp> {
         ),
         GoRoute(
           path: '/settings',
-          builder: (_, _) => const SettingsScreen(),
+          builder: (_, _) => const BackPopScope(
+            fallback: '/dashboard',
+            child: SettingsScreen(),
+          ),
           routes: [
             GoRoute(
               path: 'account',
-              builder: (_, _) => const AccountSettingsScreen(),
+              builder: (_, _) => const BackPopScope(
+                fallback: '/settings',
+                child: AccountSettingsScreen(),
+              ),
             ),
             GoRoute(
               path: 'categories',
-              builder: (_, _) => const CategoriesScreen(),
+              builder: (_, _) => const BackPopScope(
+                fallback: '/settings',
+                child: CategoriesScreen(),
+              ),
             ),
             GoRoute(
               path: 'fixed',
-              builder: (_, _) => const FixedExpensesScreen(),
+              builder: (_, _) => const BackPopScope(
+                fallback: '/settings',
+                child: FixedExpensesScreen(),
+              ),
             ),
             GoRoute(
               path: 'help',
-              builder: (_, _) => const HelpScreen(),
+              builder: (_, _) => const BackPopScope(
+                fallback: '/settings',
+                child: HelpScreen(),
+              ),
             ),
             GoRoute(
               path: 'import',
-              builder: (_, _) => const ImportScreen(),
+              builder: (_, _) => const BackPopScope(
+                fallback: '/settings',
+                child: ImportScreen(),
+              ),
               routes: [
                 GoRoute(
                   path: 'ai',
-                  builder: (_, _) => const AiImportScreen(),
+                  builder: (_, _) => const BackPopScope(
+                    fallback: '/settings/import',
+                    child: AiImportScreen(),
+                  ),
                 ),
               ],
             ),
             GoRoute(
               path: 'theme',
-              builder: (_, _) => const ThemeSettingsScreen(),
+              builder: (_, _) => const BackPopScope(
+                fallback: '/settings',
+                child: ThemeSettingsScreen(),
+              ),
             ),
             GoRoute(
               path: 'changelog',
-              builder: (_, _) => const ChangelogScreen(),
+              builder: (_, _) => const BackPopScope(
+                fallback: '/settings',
+                child: ChangelogScreen(),
+              ),
             ),
           ],
         ),
         GoRoute(
           path: '/reset-password',
-          builder: (_, _) => const ResetPasswordScreen(),
+          builder: (_, _) => const BackPopScope(
+            fallback: '/login',
+            child: ResetPasswordScreen(),
+          ),
         ),
         GoRoute(
           path: '/onboarding',

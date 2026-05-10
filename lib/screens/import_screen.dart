@@ -30,6 +30,8 @@ class _ImportScreenState extends State<ImportScreen> {
   String? _fileName;
   List<String> _errors = [];
   bool _importing = false;
+  ImportDupPreview _dupPreview =
+      const ImportDupPreview(dbDup: 0, csvDup: 0);
   // 'expense' | 'income' — 토글로 결정. 템플릿/안내/파싱 모두 이 값에 분기.
   String _type = 'expense';
 
@@ -67,13 +69,19 @@ class _ImportScreenState extends State<ImportScreen> {
   }
 
   Future<void> _pickFile() async {
+    // FileType.any로 모든 파일 보이게 — Drive 등 클라우드 파일은 mime 매핑이
+    // 안 돼서 확장자 필터 걸면 안 보이는 경우가 많음.
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['csv'],
+      type: FileType.any,
       withData: true,
     );
     if (result == null || result.files.isEmpty) return;
     final file = result.files.first;
+    final ext = (file.extension ?? '').toLowerCase();
+    if (ext != 'csv') {
+      if (mounted) showToast(context, 'CSV 파일만 올릴 수 있어요', error: true);
+      return;
+    }
     final bytes = file.bytes;
     if (bytes == null) {
       if (mounted) showToast(context, '파일을 읽을 수 없어요', error: true);
@@ -94,7 +102,16 @@ class _ImportScreenState extends State<ImportScreen> {
       _fileName = file.name;
       _rows = parsed.rows;
       _errors = parsed.errors;
+      _dupPreview = const ImportDupPreview(dbDup: 0, csvDup: 0);
     });
+    // 중복 카운트 미리 계산 (실패해도 import 흐름은 계속).
+    if (parsed.rows.isNotEmpty) {
+      try {
+        final dup =
+            await Api.instance.countDuplicateImportRows(parsed.rows);
+        if (mounted) setState(() => _dupPreview = dup);
+      } catch (_) {}
+    }
   }
 
   List<int> _stripBom(List<int> bytes) {
@@ -250,6 +267,21 @@ class _ImportScreenState extends State<ImportScreen> {
     return result;
   }
 
+  /// 미리보기 노란 박스 메시지 — DB 중복 vs CSV 안 중복 분리.
+  String _dupMessage(int total) {
+    final db = _dupPreview.dbDup;
+    final csv = _dupPreview.csvDup;
+    final inserted = total - db - csv;
+    final parts = <String>[];
+    if (db > 0) parts.add('이미 등록된 $db건');
+    if (csv > 0) parts.add('파일 안 중복 $csv건');
+    final skip = parts.join(' + ');
+    if (inserted <= 0) {
+      return '$skip은 건너뛸게요. 새로 등록할 거래가 없어요.';
+    }
+    return '$skip은 건너뛸게요. 나머지 $inserted건만 새로 등록돼요.';
+  }
+
   /// "2026-05-01", "2026/5/1", "2026.05.01" 등 → "2026-05-01".
   String? _normalizeDate(String s) {
     final cleaned = s.trim().replaceAll(RegExp(r'[./]'), '-');
@@ -272,9 +304,16 @@ class _ImportScreenState extends State<ImportScreen> {
     if (rows == null || rows.isEmpty) return;
     setState(() => _importing = true);
     try {
-      final n = await Api.instance.importTransactions(rows);
+      final result = await Api.instance.importTransactions(rows);
       if (!mounted) return;
-      showToast(context, '$n건을 등록했어요');
+      final n = result.inserted;
+      final dup = result.totalSkipped;
+      final msg = n == 0 && dup > 0
+          ? '모두 건너뛰었어요 ($dup건이 이미 등록되어 있거나 명세서 안 중복)'
+          : (dup > 0
+              ? '$n건 등록 · 건너뛴 $dup건'
+              : '$n건을 등록했어요');
+      showToast(context, msg);
       setState(() {
         _rows = null;
         _fileName = null;
@@ -485,7 +524,7 @@ class _ImportScreenState extends State<ImportScreen> {
                       children: [
                         Flexible(
                           child: Text(
-                            'AI로 신용카드 명세서 자동 정리',
+                            'AI 카드 명세서 정리',
                             style: TextStyle(
                               fontSize: 14.5,
                               fontWeight: FontWeight.w700,
@@ -499,7 +538,7 @@ class _ImportScreenState extends State<ImportScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '신용카드 명세서를 그대로 올리면 카테고리까지 자동 분류',
+                      '이용내역만 올리면 자동 분류',
                       style: TextStyle(
                         fontSize: 12,
                         color: AppColors.text2,
@@ -608,6 +647,34 @@ class _ImportScreenState extends State<ImportScreen> {
             '읽은 거래 ${rows.length}건${hasErrors ? ' · 건너뛴 행 ${_errors.length}개' : ''}',
             style: TextStyle(fontSize: 12.5, color: AppColors.text3),
           ),
+          if (_dupPreview.total > 0) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF4D6),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline,
+                      size: 14, color: const Color(0xFF8A6A00)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _dupMessage(rows.length),
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: Color(0xFF8A6A00),
+                        height: 1.5,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (rows.isNotEmpty) ...[
             const SizedBox(height: 12),
             Divider(color: AppColors.line2, height: 1),
@@ -658,7 +725,11 @@ class _ImportScreenState extends State<ImportScreen> {
           ],
           const SizedBox(height: 12),
           FilledButton(
-            onPressed: rows.isEmpty || _importing ? null : _import,
+            onPressed: (rows.isEmpty ||
+                    _importing ||
+                    rows.length - _dupPreview.total <= 0)
+                ? null
+                : _import,
             style: FilledButton.styleFrom(
               minimumSize: const Size(double.infinity, 44),
               textStyle: const TextStyle(
@@ -668,7 +739,9 @@ class _ImportScreenState extends State<ImportScreen> {
             ),
             child: Text(_importing
                 ? '등록 중...'
-                : '${rows.length}건 등록하기'),
+                : (rows.length - _dupPreview.total <= 0
+                    ? '등록할 거래 없음'
+                    : '${rows.length - _dupPreview.total}건 등록하기')),
           ),
         ],
       ),

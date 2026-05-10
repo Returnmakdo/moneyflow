@@ -576,37 +576,30 @@ class _CardCard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  card.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.text,
-                                  ),
-                                ),
-                              ),
-                              if (card.cycleStart != null &&
-                                  card.cycleEnd != null) ...[
-                                const SizedBox(width: 8),
-                                Text(
-                                  '${_shortMD(card.cycleStart!)} ~ ${_shortMD(card.cycleEnd!)}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.text3,
-                                  ),
-                                ),
-                              ],
-                            ],
+                          // 카드 이름 단독 — 우측 사용액이 커도 이름은 항상 보이게.
+                          Text(
+                            card.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.text,
+                            ),
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            '매월 ${card.paymentDay}일 결제 · ${card.linkedAccountName ?? "계좌"}',
+                            '매월 ${card.paymentDay}일 결제',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.text3,
+                            ),
+                          ),
+                          const SizedBox(height: 1),
+                          Text(
+                            card.linkedAccountName ?? '계좌',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -620,6 +613,21 @@ class _CardCard extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
+                        if (card.cycleStart != null &&
+                            card.cycleEnd != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Text(
+                              '${_shortMD(card.cycleStart!)} ~ ${_shortMD(card.cycleEnd!)}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.text3,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures()
+                                ],
+                              ),
+                            ),
+                          ),
                         Text(
                           '${won(card.cycleAmount)}원',
                           style: TextStyle(
@@ -744,6 +752,7 @@ class _CardSettlementSheetState extends State<_CardSettlementSheet> {
   }
 
   Future<void> _save() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     final amount = AmountField.parse(_amountCtrl);
     if (amount == null || amount <= 0) {
       showToast(context, '청구액을 입력해주세요', error: true);
@@ -883,8 +892,11 @@ class CardEditorState extends State<CardEditor> {
   // BottomSheet 안에서 SnackBar는 모달에 가려져서, 마감일 검증은 inline으로.
   bool _closeDayError = false;
   bool _saving = false;
+  // 결제 거래가 있는 카드는 결제일·마감일 변경 차단 — 옛 결제는 옛 약관 기준.
+  int _paymentCount = 0;
 
   bool get _isEdit => widget.existing != null;
+  bool get _cycleLocked => _isEdit && _paymentCount > 0;
 
   @override
   void initState() {
@@ -894,6 +906,15 @@ class CardEditorState extends State<CardEditor> {
     _paymentDay = ex?.paymentDay ?? 25;
     _linkedAccountId = ex?.linkedAccountId ?? widget.accounts.first.accountId;
     _statementCloseDay = ex?.statementCloseDay;
+    if (ex != null) _loadPaymentCount(ex.id);
+  }
+
+  Future<void> _loadPaymentCount(int cardId) async {
+    try {
+      final n = await Api.instance.countCardPayments(cardId);
+      if (!mounted) return;
+      setState(() => _paymentCount = n);
+    } catch (_) {/* 카운트 조회 실패해도 흐름은 계속 (default 0 = 변경 가능) */}
   }
 
   @override
@@ -903,6 +924,7 @@ class CardEditorState extends State<CardEditor> {
   }
 
   Future<void> _save() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
       showToast(context, '카드 이름을 입력해주세요', error: true);
@@ -912,9 +934,10 @@ class CardEditorState extends State<CardEditor> {
       setState(() => _closeDayError = true);
       return;
     }
+
+    final ex = widget.existing;
     setState(() => _saving = true);
     try {
-      final ex = widget.existing;
       if (ex == null) {
         await Api.instance.createCard(
           name: name,
@@ -924,14 +947,19 @@ class CardEditorState extends State<CardEditor> {
         );
         if (mounted) showToast(context, '카드 추가 완료');
       } else {
+        // 결제 거래 있는 카드는 결제일·마감일이 잠겨 있어 변경 안 됨 (UI에서 차단).
+        // 안전망: 보내는 값이 기존과 다르면 무시 (변경 사항 null).
         await Api.instance.updateCard(
           ex.id,
           name: name == ex.name ? null : name,
-          paymentDay: _paymentDay == ex.paymentDay ? null : _paymentDay,
+          paymentDay: _cycleLocked || _paymentDay == ex.paymentDay
+              ? null
+              : _paymentDay,
           linkedAccountId: _linkedAccountId == ex.linkedAccountId
               ? null
               : _linkedAccountId,
-          statementCloseDay: _statementCloseDay,
+          statementCloseDay:
+              _cycleLocked ? ex.statementCloseDay : _statementCloseDay,
         );
         if (mounted) showToast(context, '수정했어요');
       }
@@ -942,6 +970,7 @@ class CardEditorState extends State<CardEditor> {
       if (mounted) setState(() => _saving = false);
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -985,16 +1014,24 @@ class CardEditorState extends State<CardEditor> {
                 ),
               ),
               const SizedBox(height: 18),
-              AppDropdown<int>(
-                label: '결제일 (매월)',
-                value: _paymentDay,
-                items: [
-                  for (var d = 1; d <= 31; d++)
-                    AppDropdownItem(value: d, label: '$d일'),
-                ],
-                onChanged: (v) => setState(() => _paymentDay = v),
-              ),
-              const SizedBox(height: 12),
+              if (_cycleLocked) ...[
+                _LockedDayField(
+                  label: '결제일 (매월)',
+                  text: '$_paymentDay일',
+                ),
+                const SizedBox(height: 12),
+              ] else ...[
+                AppDropdown<int>(
+                  label: '결제일 (매월)',
+                  value: _paymentDay,
+                  items: [
+                    for (var d = 1; d <= 31; d++)
+                      AppDropdownItem(value: d, label: '$d일'),
+                  ],
+                  onChanged: (v) => setState(() => _paymentDay = v),
+                ),
+                const SizedBox(height: 12),
+              ],
               AppDropdown<int>(
                 label: '연동 계좌 (결제일에 빠질 곳)',
                 value: _linkedAccountId,
@@ -1005,31 +1042,31 @@ class CardEditorState extends State<CardEditor> {
                 onChanged: (v) => setState(() => _linkedAccountId = v),
               ),
               const SizedBox(height: 12),
-              AppDropdown<int>(
-                label: '사용 마감일 (매월)',
-                value: _statementCloseDay,
-                items: [
-                  for (var d = 1; d <= 31; d++)
-                    AppDropdownItem(value: d, label: '$d일'),
-                ],
-                onChanged: (v) => setState(() {
-                  _statementCloseDay = v;
-                  _closeDayError = false;
-                }),
-              ),
-              const SizedBox(height: 6),
-              if (_closeDayError)
-                Text(
-                  '사용 마감일을 골라주세요',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: AppColors.danger,
-                    fontWeight: FontWeight.w600,
-                    height: 1.5,
-                  ),
-                )
-              else
-                _closeDayHelp(),
+              if (_cycleLocked) ...[
+                _LockedDayField(
+                  label: '사용 마감일 (매월)',
+                  text: _statementCloseDay != null
+                      ? '$_statementCloseDay일'
+                      : '없음',
+                ),
+                const SizedBox(height: 8),
+                _CycleLockedNotice(paymentCount: _paymentCount),
+              ] else ...[
+                AppDropdown<int>(
+                  label: '사용 마감일 (매월)',
+                  value: _statementCloseDay,
+                  items: [
+                    for (var d = 1; d <= 31; d++)
+                      AppDropdownItem(value: d, label: '$d일'),
+                  ],
+                  onChanged: (v) => setState(() {
+                    _statementCloseDay = v;
+                    _closeDayError = false;
+                  }),
+                ),
+                const SizedBox(height: 6),
+                _closeDayHelp(highlightError: _closeDayError),
+              ],
               const SizedBox(height: 22),
               FilledButton(
                 onPressed: _saving ? null : _save,
@@ -1050,15 +1087,20 @@ class CardEditorState extends State<CardEditor> {
   }
 
   /// 사용 마감일 안내 + 처음 사용자를 위한 펼치기 가이드.
-  Widget _closeDayHelp() {
+  /// highlightError=true면 첫 줄을 빨간 에러 톤으로 토글 (펼치기는 유지).
+  Widget _closeDayHelp({bool highlightError = false}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          '이 날 이후 사용분은 다음 달 결제로 넘어가요.',
+          highlightError
+              ? '사용 마감일을 골라주세요'
+              : '이 날 이후 사용분은 다음 달 결제로 넘어가요.',
           style: TextStyle(
             fontSize: 11.5,
-            color: AppColors.text3,
+            color: highlightError ? AppColors.danger : AppColors.text3,
+            fontWeight:
+                highlightError ? FontWeight.w600 : FontWeight.w400,
             height: 1.5,
           ),
         ),
@@ -1101,6 +1143,90 @@ class CardEditorState extends State<CardEditor> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 결제일·마감일이 잠긴 read-only 표시. 결제 거래가 1건이라도 있으면 변경 차단.
+class _LockedDayField extends StatelessWidget {
+  const _LockedDayField({required this.label, required this.text});
+  final String label;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface2,
+        border: Border.all(color: AppColors.line),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: AppColors.text3,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  text,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.text2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.lock_outline,
+              size: 16, color: AppColors.text3),
+        ],
+      ),
+    );
+  }
+}
+
+/// 결제 거래가 있는 카드는 결제일·마감일이 잠겼다는 안내.
+class _CycleLockedNotice extends StatelessWidget {
+  const _CycleLockedNotice({required this.paymentCount});
+  final int paymentCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF4D6),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline,
+              size: 14, color: const Color(0xFF8A6A00)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              '이 카드의 결제 거래가 $paymentCount건 있어 결제일·마감일을 바꿀 수 없어요. '
+              '카드 약관이 진짜 바뀌었다면 새 카드로 등록해주세요.',
+              style: const TextStyle(
+                fontSize: 11.5,
+                color: Color(0xFF8A6A00),
+                height: 1.5,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1252,6 +1378,7 @@ class AccountEditorState extends State<AccountEditor> {
   }
 
   Future<void> _save() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
       showToast(context, '계좌 이름을 입력해주세요', error: true);

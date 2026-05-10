@@ -816,6 +816,7 @@ class _FixedModalState extends State<_FixedModal> {
   }
 
   Future<void> _save() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     final name = _name.text.trim();
     if (name.isEmpty || _major.isEmpty) {
       showToast(context, '이름과 카테고리는 필수예요', error: true);

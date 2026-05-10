@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show OAuthProvider;
 import '../auth.dart';
@@ -122,6 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     final email = _emailCtrl.text.trim();
     final password = _passCtrl.text;
     if (email.isEmpty || password.isEmpty) {
@@ -132,6 +134,10 @@ class _LoginScreenState extends State<LoginScreen> {
       final name = _nameCtrl.text.trim();
       if (name.isEmpty) {
         _showError('이름을 입력해주세요');
+        return;
+      }
+      if (name.characters.length > 6) {
+        _showError('이름은 최대 6자까지예요');
         return;
       }
       if (_emailFormatError != null) {
@@ -366,8 +372,13 @@ class _LoginScreenState extends State<LoginScreen> {
                         controller: _nameCtrl,
                         autofillHints: const [AutofillHints.name],
                         textInputAction: TextInputAction.next,
+                        maxLength: 6,
+                        inputFormatters: [
+                          LengthLimitingTextInputFormatter(6),
+                        ],
                         decoration: const InputDecoration(
-                          hintText: '이름을 입력해주세요',
+                          hintText: '이름 (최대 6자)',
+                          counterText: '',
                         ),
                       ),
                       const SizedBox(height: 14),

@@ -16,3 +16,30 @@ void goBackOr(BuildContext context, String fallback) {
     context.go(fallback);
   }
 }
+
+/// Android 시스템 뒤로가기 처리. context.go로 navigation해서 stack에 안
+/// 쌓인 화면들에서, 시스템 back 버튼 누르면 앱이 종료되는 걸 막기 위해
+/// fallback path로 이동시킴. 웹 브라우저 뒤로가기는 URL history 기반이라
+/// PopScope 통과 안 함 — 영향 없음.
+class BackPopScope extends StatelessWidget {
+  const BackPopScope({
+    super.key,
+    required this.child,
+    required this.fallback,
+  });
+
+  final Widget child;
+  final String fallback;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        goBackOr(context, fallback);
+      },
+      child: child,
+    );
+  }
+}

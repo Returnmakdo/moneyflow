@@ -67,15 +67,17 @@ class KpiCard extends StatelessWidget {
                 fontWeight: FontWeight.w500,
               )),
           const SizedBox(height: 6),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Flexible(
-                child: Text(
+          // 카드 너비가 좁아져도 금액이 잘리지 않도록 FittedBox로 자동 축소.
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(
                   value,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: fg,
                     fontSize: 24,
@@ -84,15 +86,15 @@ class KpiCard extends StatelessWidget {
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
-              ),
-              const SizedBox(width: 2),
-              Text(unit,
-                  style: TextStyle(
-                    color: fg2,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  )),
-            ],
+                const SizedBox(width: 2),
+                Text(unit,
+                    style: TextStyle(
+                      color: fg2,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    )),
+              ],
+            ),
           ),
           if (delta != null) ...[
             const SizedBox(height: 6),

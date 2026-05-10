@@ -59,6 +59,35 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.1
+  flutter_native_splash: ^2.4.1
+
+# 앱 아이콘 자동 생성 — `flutter pub run flutter_launcher_icons` 실행 시
+# Android·iOS·웹 favicon 모두 한 번에 생성. 변경 시 image_path만 갈아끼우고
+# 같은 명령 다시 실행.
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  remove_alpha_ios: true
+  image_path: "assets/icons/app_icon.png"
+  web:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+    background_color: "#3182F6"
+    theme_color: "#3182F6"
+  windows:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+
+# 앱 시동 splash — 토스블루 배경 + 앱 아이콘. 아이콘 PNG에 padding 충분해서
+# Android 12 splash 마스킹에 가로선 안 잘림. `dart run flutter_native_splash:create`
+flutter_native_splash:
+  color: "#3182F6"
+  image: assets/icons/app_icon.png
+  android_12:
+    color: "#3182F6"
+    image: assets/icons/app_icon.png
+  web: false
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

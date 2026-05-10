@@ -117,6 +117,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
   }
 
   Future<void> _save() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     if (_saving || _data == null) return;
     setState(() => _saving = true);
     try {

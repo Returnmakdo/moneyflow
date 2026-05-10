@@ -80,16 +80,20 @@ class PageHeader extends StatelessWidget {
     }
 
     // 모바일: title + actions + avatar 한 줄 (compact MonthSwitcher 덕분에 들어감)
-    final mobileTitle = Text(
-      title,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        fontSize: 19,
-        fontWeight: FontWeight.w700,
-        color: AppColors.text,
-        letterSpacing: -0.2,
-        height: 1.2,
+    // 이름이 길어도 잘리지 않도록 FittedBox로 자동 축소.
+    final mobileTitle = FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: Text(
+        title,
+        maxLines: 1,
+        style: TextStyle(
+          fontSize: 19,
+          fontWeight: FontWeight.w700,
+          color: AppColors.text,
+          letterSpacing: -0.2,
+          height: 1.2,
+        ),
       ),
     );
     return Padding(
@@ -295,20 +299,20 @@ class MonthSwitcher extends StatelessWidget {
     final compact = !isWide;
     final labelChild = Padding(
       padding: EdgeInsets.symmetric(
-          horizontal: compact ? 4 : 8, vertical: 6),
+          horizontal: compact ? 2 : 8, vertical: 6),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(label,
               style: TextStyle(
                 fontWeight: FontWeight.w600,
-                fontSize: compact ? 13 : 14,
+                fontSize: compact ? 12 : 14,
                 color: AppColors.text,
               )),
           if (onTapLabel != null) ...[
-            const SizedBox(width: 2),
+            const SizedBox(width: 1),
             Icon(Icons.expand_more,
-                size: 16, color: AppColors.text3),
+                size: compact ? 14 : 16, color: AppColors.text3),
           ],
         ],
       ),
@@ -324,9 +328,9 @@ class MonthSwitcher extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            iconSize: compact ? 18 : 20,
+            iconSize: compact ? 16 : 20,
             visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.all(compact ? 4 : 8),
+            padding: EdgeInsets.all(compact ? 2 : 8),
             constraints: const BoxConstraints(),
             onPressed: onPrev,
             icon: Icon(Icons.chevron_left,
@@ -341,9 +345,9 @@ class MonthSwitcher extends StatelessWidget {
           else
             labelChild,
           IconButton(
-            iconSize: compact ? 18 : 20,
+            iconSize: compact ? 16 : 20,
             visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.all(compact ? 4 : 8),
+            padding: EdgeInsets.all(compact ? 2 : 8),
             constraints: const BoxConstraints(),
             onPressed: onNext,
             icon: Icon(Icons.chevron_right,

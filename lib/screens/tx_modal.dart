@@ -189,6 +189,7 @@ class _TxModalState extends State<_TxModal> {
   }
 
   Future<void> _save() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     final amount = AmountField.parse(_amount);
     if (_date.text.isEmpty || amount == null || amount <= 0) {
       showToast(

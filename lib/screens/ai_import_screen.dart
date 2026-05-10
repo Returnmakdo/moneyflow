@@ -35,6 +35,8 @@ class _AiImportScreenState extends State<AiImportScreen> {
   List<int> _skippedRowIndexes = const [];
   int _excludedByStatusCount = 0;
   Map<String, CsvClassifyItem> _classByMerchant = const {};
+  ImportDupPreview _dupPreview =
+      const ImportDupPreview(dbDup: 0, csvDup: 0);
 
   bool _busy = false;
   String? _busyText;
@@ -175,20 +177,25 @@ class _AiImportScreenState extends State<AiImportScreen> {
 
   Future<void> _pickFile() async {
     setState(() => _error = null);
+    // FileType.any로 모든 파일 보이게 — Drive 등 클라우드 파일은 mime 매핑이
+    // 안 돼서 confirm 후에야 확장자가 드러나는 경우가 많음. 호환성 우선.
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['csv', 'xlsx', 'xls'],
+      type: FileType.any,
       withData: true,
     );
     if (result == null || result.files.isEmpty) return;
     final file = result.files.first;
+    final ext = (file.extension ?? '').toLowerCase();
+    if (!['csv', 'xlsx', 'xls'].contains(ext)) {
+      setState(() => _error = 'CSV·XLS·XLSX 파일만 올릴 수 있어요.');
+      return;
+    }
     final bytes = file.bytes;
     if (bytes == null) {
       setState(() => _error = '파일을 읽을 수 없어요.');
       return;
     }
 
-    final ext = (file.extension ?? '').toLowerCase();
     late final CsvFile parsed;
     var mojibake = false;
     try {
@@ -396,10 +403,36 @@ class _AiImportScreenState extends State<AiImportScreen> {
       final results = await Api.instance.getCsvClassification(
         merchants: merchants.toList(),
       );
+      // 중복 카운트 미리 계산 — 사용자가 등록 전에 알 수 있게.
+      ImportDupPreview dup =
+          const ImportDupPreview(dbDup: 0, csvDup: 0);
+      try {
+        final selectedCardId = _selectedCardId;
+        if (selectedCardId != null) {
+          final previewRows = rows
+              .map((r) => ImportRow(
+                    date: r.date,
+                    amount: r.amount,
+                    majorCategory: r.majorCategory,
+                    subCategory: r.subCategory,
+                    card: r.card,
+                    merchant: r.merchant,
+                    memo: r.memo,
+                    isFixed: false,
+                    cardId: selectedCardId,
+                    accountId: null,
+                    type: 'expense',
+                  ))
+              .toList();
+          dup =
+              await Api.instance.countDuplicateImportRows(previewRows);
+        }
+      } catch (_) {/* dup count 실패해도 import 흐름은 계속 */}
       if (!mounted) return;
       setState(() {
         _classByMerchant = {for (final c in results) c.merchant: c};
         _phase = _Phase.classifyReview;
+        _dupPreview = dup;
         _busy = false;
         _busyText = null;
       });
@@ -411,6 +444,21 @@ class _AiImportScreenState extends State<AiImportScreen> {
         _busyText = null;
       });
     }
+  }
+
+  /// 미리보기 노란 박스 메시지. DB 중복 vs CSV 안 중복 분리해서 안내.
+  String _dupPreviewMessage(int total) {
+    final db = _dupPreview.dbDup;
+    final csv = _dupPreview.csvDup;
+    final inserted = total - db - csv;
+    final parts = <String>[];
+    if (db > 0) parts.add('이미 등록된 $db건');
+    if (csv > 0) parts.add('명세서 안 중복 $csv건');
+    final skip = parts.join(' + ');
+    if (inserted <= 0) {
+      return '$skip은 건너뛸게요. 새로 등록할 거래가 없어요.';
+    }
+    return '$skip은 건너뛸게요. 나머지 $inserted건만 새로 등록돼요.';
   }
 
   /// 분류 미리보기 단계 — 결제수단 확정값만 보여줌 (편집 X).
@@ -585,7 +633,10 @@ class _AiImportScreenState extends State<AiImportScreen> {
     // 옛 사이클이 있으면 자동 정리 다이얼로그.
     _PastCycleResult? settleResult;
     AccountBalance? linkedBalance;
-    if (pastCycles.isNotEmpty) {
+    final alreadyAutoSettled = card.autoSettledAt != null;
+    // 옛 사이클이 있어도 이미 자동 정리된 카드는 다이얼로그 안 띄움 — 시작잔고
+      // 누적 보정 방지. 사용 거래만 추가 등록 (사이클이 새로 늘었을 수도).
+    if (pastCycles.isNotEmpty && !alreadyAutoSettled) {
       try {
         final snap = await Api.instance.getAssetSnapshot();
         for (final a in snap.accounts) {
@@ -614,7 +665,14 @@ class _AiImportScreenState extends State<AiImportScreen> {
     setState(() => _importing = true);
     try {
       // 1) 카드 사용 거래 일괄 등록.
-      final n = await Api.instance.importTransactions(finalRows);
+      final result = await Api.instance.importTransactions(finalRows);
+      final n = result.inserted;
+      final dupSkipped = result.totalSkipped;
+      // 토스트용 dup 설명 — DB 중복 / CSV 안 중복 분리.
+      final dupParts = <String>[];
+      if (result.dbDup > 0) dupParts.add('이미 등록된 ${result.dbDup}건');
+      if (result.csvDup > 0) dupParts.add('명세서 안 중복 ${result.csvDup}건');
+      final dupDesc = dupParts.join(' + ');
 
       // 2) 옛 사이클 자동 결제 처리.
       int settledCount = 0;
@@ -646,12 +704,19 @@ class _AiImportScreenState extends State<AiImportScreen> {
           linkedBalance.accountId,
           initialBalance: newInitial,
         );
+
+        // 4) 카드에 자동 정리 마킹 — 같은 카드 다시 import해도 누적 안 됨.
+        await Api.instance.markCardAutoSettled(card.id);
       }
 
       if (!mounted) return;
+      final dupSuffix =
+          dupSkipped > 0 ? ' · $dupDesc은 건너뛰었어요' : '';
       final msg = settledCount > 0
-          ? '거래 $n건과 옛 결제 $settledCount건을 등록했어요. 통장 시작잔고도 맞춰뒀어요'
-          : '거래 $n건이 등록됐어요. 대시보드에서 확인해보세요';
+          ? '거래 $n건과 옛 결제 $settledCount건을 등록했어요. 통장 시작잔고도 맞춰뒀어요$dupSuffix'
+          : (n == 0 && dupSkipped > 0
+              ? '모두 건너뛰었어요 ($dupDesc)'
+              : '거래 $n건이 등록됐어요. 대시보드에서 확인해보세요$dupSuffix');
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(
@@ -933,7 +998,7 @@ class _AiImportScreenState extends State<AiImportScreen> {
           children: [
             Flexible(
               child: Text(
-                'AI로 신용카드 명세서 정리',
+                'AI 카드 명세서 정리',
                 style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
@@ -1176,6 +1241,7 @@ class _AiImportScreenState extends State<AiImportScreen> {
           ),
       ];
       if (!mounted) return;
+      final prevIds = _cards.map((c) => c.id).toSet();
       final saved = await showModalBottomSheet<bool>(
         context: context,
         isScrollControlled: true,
@@ -1187,7 +1253,14 @@ class _AiImportScreenState extends State<AiImportScreen> {
         ),
         builder: (_) => CardEditor(accounts: accBalances),
       );
-      if (saved == true) await _loadPaymentOptions();
+      if (saved == true) {
+        await _loadPaymentOptions();
+        // 새로 추가된 카드를 자동 선택.
+        final newCard = _cards.where((c) => !prevIds.contains(c.id));
+        if (newCard.isNotEmpty) {
+          setState(() => _selectedCardId = newCard.first.id);
+        }
+      }
     } else {
       final saved = await showModalBottomSheet<bool>(
         context: context,
@@ -1298,7 +1371,7 @@ class _AiImportScreenState extends State<AiImportScreen> {
                   side: BorderSide(color: AppColors.line),
                   minimumSize: const Size(0, 44),
                 ),
-                child: const Text('다른 파일 선택'),
+                child: const Text('다른 파일'),
               ),
             ),
             const SizedBox(width: 10),
@@ -1313,7 +1386,7 @@ class _AiImportScreenState extends State<AiImportScreen> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                child: const Text('가맹점 분류로 진행'),
+                child: const Text('가맹점 분류'),
               ),
             ),
           ],
@@ -1429,7 +1502,7 @@ class _AiImportScreenState extends State<AiImportScreen> {
                         side: BorderSide(color: AppColors.line),
                         minimumSize: const Size(0, 44),
                       ),
-                      child: const Text('다른 파일 선택'),
+                      child: const Text('다른 파일'),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -1656,6 +1729,34 @@ class _AiImportScreenState extends State<AiImportScreen> {
         ),
         const SizedBox(height: 12),
         _paymentSummary(),
+        if (_dupPreview.total > 0) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF4D6),
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline,
+                    size: 16, color: const Color(0xFF8A6A00)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _dupPreviewMessage(rows.length),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF8A6A00),
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         AppCard(
           padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
@@ -1704,7 +1805,10 @@ class _AiImportScreenState extends State<AiImportScreen> {
             Expanded(
               flex: 2,
               child: FilledButton(
-                onPressed: _importing ? null : _import,
+                onPressed:
+                    (_importing || rows.length - _dupPreview.total <= 0)
+                        ? null
+                        : _import,
                 style: FilledButton.styleFrom(
                   minimumSize: const Size(0, 44),
                   textStyle: const TextStyle(
@@ -1714,7 +1818,9 @@ class _AiImportScreenState extends State<AiImportScreen> {
                 ),
                 child: Text(_importing
                     ? '등록 중…'
-                    : '${rows.length}건 등록하기'),
+                    : (rows.length - _dupPreview.total <= 0
+                        ? '등록할 거래 없음'
+                        : '${rows.length - _dupPreview.total}건 등록하기')),
               ),
             ),
           ],
@@ -2094,7 +2200,7 @@ class _ConfidencePill extends StatelessWidget {
         borderRadius: BorderRadius.circular(99),
       ),
       child: Text(
-        '신뢰도 $label',
+        label,
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w700,
@@ -2115,7 +2221,6 @@ class _MissingDataPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const label = '신용카드';
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
       decoration: BoxDecoration(
@@ -2130,9 +2235,9 @@ class _MissingDataPrompt extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '등록된 $label이(가) 없어요. 바로 추가하면 돼요.',
+              '등록된 신용카드가 없어요',
               style: TextStyle(
-                fontSize: 12.5,
+                fontSize: 13,
                 color: AppColors.text2,
                 height: 1.5,
               ),
@@ -2150,7 +2255,7 @@ class _MissingDataPrompt extends StatelessWidget {
                 fontWeight: FontWeight.w700,
               ),
             ),
-            child: Text('$label 추가'),
+            child: const Text('카드 추가'),
           ),
         ],
       ),
@@ -2180,6 +2285,9 @@ class _PastCycleResult {
 /// 사용일이 어느 결제일에 청구될지 계산.
 /// - 사용일이 그 달 마감일 이하 → 그 달 결제일
 /// - 마감일 초과 → 다음 달 결제일
+/// - 결제일이 마감일보다 빠르거나 같으면 (paymentDay ≤ closeDay) 결제가 한 달 더
+///   늦어지는 카드 — 추가로 한 달 밀어 처리. 예) 결제 9·마감 20 → 4/15 사용분은
+///   5/9가 아니라 6/9 결제 사이클.
 /// - 마감일/결제일이 그 달 말일보다 크면 말일로 클램프 (31일 결제일인 2월 등)
 DateTime _paymentDateForUsage({
   required DateTime usageDate,
@@ -2195,10 +2303,14 @@ DateTime _paymentDateForUsage({
   int month = usageDate.month;
   if (usageDate.day > effectiveCloseDay) {
     month += 1;
-    if (month > 12) {
-      year += 1;
-      month = 1;
-    }
+  }
+  // 결제일이 마감일보다 같거나 빠른 카드는 한 달 더 늦게 결제됨.
+  if (paymentDay <= closeDay) {
+    month += 1;
+  }
+  while (month > 12) {
+    year += 1;
+    month -= 12;
   }
   final lastDayOfPaymentMonth = DateTime(year, month + 1, 0).day;
   final effectivePaymentDay =

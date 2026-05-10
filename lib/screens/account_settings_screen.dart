@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show User;
@@ -77,9 +78,14 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   }
 
   Future<void> _saveName() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
       showToast(context, '이름은 비울 수 없어요', error: true);
+      return;
+    }
+    if (name.characters.length > 6) {
+      showToast(context, '이름은 최대 6자까지예요', error: true);
       return;
     }
     if (name == AuthService.displayName()) return;
@@ -96,6 +102,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   }
 
   Future<void> _changePassword() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     if (!_passwordValid) {
       showToast(context, '비밀번호 조건을 모두 만족해야 해요', error: true);
       return;
@@ -310,8 +317,11 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
             controller: _nameCtrl,
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _saveName(),
+            maxLength: 6,
+            inputFormatters: [LengthLimitingTextInputFormatter(6)],
             decoration: const InputDecoration(
-              hintText: '이름',
+              hintText: '이름 (최대 6자)',
+              counterText: '',
             ),
           ),
           const SizedBox(height: 10),

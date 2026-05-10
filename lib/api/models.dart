@@ -15,6 +15,31 @@ AccountType _accountTypeFrom(String? s) {
 
 /// 신용카드 entity. 계좌(자산)과 분리 — 사용 시점엔 자산 안 빠지고
 /// 결제일에 연동 입출금 계좌(linkedAccountId)에서 한 번에 차감됨.
+/// importTransactions 결과.
+/// - inserted: 실제 등록된 건수
+/// - dbDup: 기존 DB에 같은 거래가 있어서 skip된 건수
+/// - csvDup: 명세서 안에 같은 키가 두 번 이상 있어서 한 번만 등록 후 skip된 건수
+class ImportResult {
+  final int inserted;
+  final int dbDup;
+  final int csvDup;
+  const ImportResult({
+    required this.inserted,
+    required this.dbDup,
+    required this.csvDup,
+  });
+
+  int get totalSkipped => dbDup + csvDup;
+}
+
+/// import 미리보기 결과 — 등록 전 dedupe 카운트만 검사.
+class ImportDupPreview {
+  final int dbDup;
+  final int csvDup;
+  const ImportDupPreview({required this.dbDup, required this.csvDup});
+  int get total => dbDup + csvDup;
+}
+
 class CreditCard {
   final int id;
   final String name;
@@ -23,6 +48,10 @@ class CreditCard {
   final int? statementCloseDay; // 사용 마감일 (모르면 null)
   final int sortOrder;
   final bool active;
+  /// AI import 옛 사이클 자동 정리가 한 번이라도 적용된 시각.
+  /// 같은 카드에 대해 다시 자동 정리되면 시작잔고가 누적 보정돼 자산이 깨짐 —
+  /// 이 값이 있으면 다이얼로그에서 자동 정리 옵션을 막음.
+  final DateTime? autoSettledAt;
 
   const CreditCard({
     required this.id,
@@ -32,6 +61,7 @@ class CreditCard {
     this.statementCloseDay,
     this.sortOrder = 0,
     this.active = true,
+    this.autoSettledAt,
   });
 
   factory CreditCard.fromJson(Map<String, dynamic> j) => CreditCard(
@@ -43,6 +73,9 @@ class CreditCard {
             (j['statement_close_day'] as num?)?.toInt(),
         sortOrder: (j['sort_order'] as num?)?.toInt() ?? 0,
         active: ((j['active'] as num?)?.toInt() ?? 1) == 1,
+        autoSettledAt: j['auto_settled_at'] == null
+            ? null
+            : DateTime.parse(j['auto_settled_at'] as String),
       );
 }
 
