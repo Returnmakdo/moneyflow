@@ -439,7 +439,14 @@ class Api {
     return ImportDupPreview(dbDup: dbDup, csvDup: csvDup);
   }
 
-  Future<ImportResult> importTransactions(List<ImportRow> rows) async {
+  /// [csvDedupe] — 같은 import 안에 같은 (카드/계좌+날짜+가맹점+금액) 거래가
+  /// 둘 이상이면 1건만 등록. 수기 CSV는 사용자가 정리하지 못한 중복을 걸러야 해서
+  /// true가 안전. 카드사 명세서는 *시간이 다른 진짜 거래*를 합쳐버리는 부작용이
+  /// 있어서 false로 호출해야 함 (AI 카드 명세서 import 흐름).
+  Future<ImportResult> importTransactions(
+    List<ImportRow> rows, {
+    bool csvDedupe = true,
+  }) async {
     if (rows.isEmpty) {
       return const ImportResult(inserted: 0, dbDup: 0, csvDup: 0);
     }
@@ -567,7 +574,7 @@ class Api {
         dbDup++;
         continue;
       }
-      if (!seen.add(key)) {
+      if (csvDedupe && !seen.add(key)) {
         csvDup++;
         continue;
       }
@@ -947,8 +954,10 @@ class Api {
       final parts = ym.split('-').map(int.parse).toList();
       daysDivisor = DateTime(parts[0], parts[1] + 1, 0).day;
     }
+    // 일평균은 변동비 기준 — 매월 고정 금액인 정기지출(월세·구독 등)이 들어가면
+    // "오늘 얼마 쓰는지" 체감이 흐려져서. 변동비만 나눠야 소비 페이스를 본다.
     final dailyAvg =
-        daysDivisor > 0 ? (thisMonthTotal / daysDivisor).round() : 0;
+        daysDivisor > 0 ? (variableTotal / daysDivisor).round() : 0;
 
     // 카테고리 집계는 expense majors만 (예산도 expense 전용).
     final perMajor = <String, _MajorAgg>{};
@@ -1230,6 +1239,11 @@ class Api {
 
   /// 카탈로그 편집 — 다음 자동 적용부터 반영. 이미 등록된 거래는 *건드리지
   /// 않음* (분리 모델). 거래도 함께 바꾸려면 거래내역에서 직접 편집.
+  ///
+  /// "이미 일어난 건 안 건드림" 정책 보강 — 수정 후 과거 월에 자동 backfill
+  /// 발생 방지를 위해 `fixed_apply_log`에 (created_month ~ 이전 월) upsert.
+  /// 카테고리/이름 변경으로 dedupe 키가 깨져도 이전 월에는 새 거래 INSERT 안 됨.
+  /// 현재 월은 backfill 안 함 — 도래분은 새 정보로 정상 적용되어야 하므로.
   Future<FixedExpense> updateFixedExpense(
     int id, {
     String? name,
@@ -1267,8 +1281,51 @@ class Api {
         .select()
         .single();
 
+    await _backfillFixedApplyLog(id, row);
+
     fixedVersion.value++;
     return FixedExpense.fromJson(row);
+  }
+
+  /// 카탈로그 수정 시 과거 월(created_month ~ 현재월 이전)에 대해
+  /// fixed_apply_log를 채워 자동 backfill 차단. 이미 있는 (fixed_id, month)는
+  /// upsert로 그대로 유지.
+  Future<void> _backfillFixedApplyLog(
+      int fixedId, Map<String, dynamic> row) async {
+    final createdAt = row['created_at'] as String?;
+    if (createdAt == null || createdAt.length < 7) return;
+    final createdMonth = createdAt.substring(0, 7);
+    if (!RegExp(r'^\d{4}-\d{2}$').hasMatch(createdMonth)) return;
+    final now = DateTime.now();
+    final ymToday =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}';
+    if (createdMonth.compareTo(ymToday) >= 0) return; // 같은 달이거나 미래 — 차단 불필요
+    final months = <String>[];
+    var cursor = createdMonth;
+    while (cursor.compareTo(ymToday) < 0) {
+      months.add(cursor);
+      cursor = _nextYmString(cursor);
+    }
+    if (months.isEmpty) return;
+    final userId = _uid();
+    final rows = [
+      for (final m in months)
+        {'user_id': userId, 'fixed_id': fixedId, 'month': m},
+    ];
+    // ignoreDuplicates — 이미 있는 (fxId, month)는 그대로 둠. fixed_apply_log에
+    // UPDATE RLS 정책이 없어서 upsert가 conflict 시 UPDATE 시도하면 권한 에러.
+    await sb.from('fixed_apply_log').upsert(
+          rows,
+          onConflict: 'user_id,fixed_id,month',
+          ignoreDuplicates: true,
+        );
+  }
+
+  String _nextYmString(String ym) {
+    final y = int.parse(ym.substring(0, 4));
+    final m = int.parse(ym.substring(5, 7));
+    if (m == 12) return '${y + 1}-01';
+    return '$y-${(m + 1).toString().padLeft(2, '0')}';
   }
 
   Future<void> deleteFixedExpense(int id) async {
@@ -1696,13 +1753,14 @@ class Api {
       // - 결제일 > 마감일(일반 카드): 다음 결제일 청구 사이클은 (전월 close+1 ~ 이번달 close)
       // - 결제일 ≤ 마감일 (결제 9·마감 20 같은 카드): 마감 후 다음 달 9일이 아니라
       //   *그 다음 달* 9일 결제. 사이클이 한 달 앞당겨짐 — paymentLate 보정.
+      // useThisMonthCycle은 사이클 계산 + 정산 기간 계산 둘 다에 쓰여서 밖에 둠.
+      final useThisMonthCycle = today.day <= thisMonthPay.day || needs;
       String? cycleStartStr;
       String? cycleEndStr;
       if (c.statementCloseDay != null) {
         final close = c.statementCloseDay!;
         final paymentLate = c.paymentDay <= close;
         late DateTime cs, ce;
-        final useThisMonthCycle = today.day <= thisMonthPay.day || needs;
         // close가 month 일수보다 크면 그 month 마지막 날로 clamp.
         // 예: close=31 + 2월(28/29일) → ce = 2/28(또는 29). 윤년 자동.
         DateTime clamped(int y, int m) {
@@ -1722,7 +1780,10 @@ class Api {
         cycleEndStr = fmt(ce);
       }
       // cycleAmount — 사이클 내 카드 사용 합계. 사이클 정보 없으면 미정산 부채.
+      // cycleSettled — 이번 결제 사이클의 결제 합. 미리 결제·분할 결제가 있을 때
+      // 자동 채움·카드 row가 *남은* 청구액으로 보이도록.
       int cycleAmount;
+      int cycleSettled = 0;
       if (cycleStartStr != null && cycleEndStr != null) {
         cycleAmount = 0;
         for (final t in txs) {
@@ -1733,8 +1794,46 @@ class Api {
             cycleAmount += t.amount;
           }
         }
+        // 이번 사이클의 결제 = (지난 결제일 다음날 ~ 이번 결제일) 사이의
+        // card_payment. 이렇게 잡아야 사이클 중간(마감일 전)에 미리 결제한 것도
+        // 잡히고 옛 사이클 결제일 거래는 빠짐. useThisMonthCycle=false면 다음
+        // 결제 사이클의 결제 기간(이번 결제일 다음날 ~ 다음 결제일).
+        late DateTime settleStartDate, settleEndDate;
+        if (useThisMonthCycle) {
+          final lastPay = payDateOf(today.year, today.month - 1);
+          settleStartDate = lastPay.add(const Duration(days: 1));
+          settleEndDate = thisMonthPay;
+        } else {
+          settleStartDate = thisMonthPay.add(const Duration(days: 1));
+          settleEndDate = payDateOf(today.year, today.month + 1);
+        }
+        String fmtDate(DateTime d) =>
+            '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+        final settleStartStr = fmtDate(settleStartDate);
+        final settleEndStr = fmtDate(settleEndDate);
+        for (final t in txs) {
+          if (t.type == 'card_payment' &&
+              t.cardId == c.id &&
+              t.date.compareTo(settleStartStr) >= 0 &&
+              t.date.compareTo(settleEndStr) <= 0) {
+            cycleSettled += t.amount;
+          }
+        }
       } else {
         cycleAmount = debt;
+      }
+      // 빨간 줄(needsSettle) 최종 판정 — 부분 결제 후 남은 청구액 케이스도 잡음.
+      // 사이클 정보 있는 카드: 결제일 지났는데 *옛 사이클* 미정산이 있으면 빨간 줄.
+      //   oldDebt = debt − remainingBilling (다음 사이클 청구분 제외).
+      // 사이클 정보 없는 카드: 기존 로직 (debt > 0 + 이번 달 결제 거래 미존재).
+      final bool finalNeeds;
+      if (c.statementCloseDay != null) {
+        final remainingBilling =
+            (cycleAmount - cycleSettled).clamp(0, debt);
+        final oldDebt = debt - remainingBilling;
+        finalNeeds = today.day > thisMonthPay.day && oldDebt > 0;
+      } else {
+        finalNeeds = needs;
       }
       cardSummaries.add(CardSummary(
         cardId: c.id,
@@ -1745,8 +1844,9 @@ class Api {
         active: c.active,
         pendingAmount: debt,
         cycleAmount: cycleAmount,
+        cycleSettled: cycleSettled,
         daysUntilPayment: daysUntil,
-        needsSettlement: needs,
+        needsSettlement: finalNeeds,
         cycleStart: cycleStartStr,
         cycleEnd: cycleEndStr,
       ));

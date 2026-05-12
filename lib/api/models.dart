@@ -90,9 +90,11 @@ class CardSummary {
   /// 전체 미정산 카드 부채(모든 사용 − 모든 결제). 자산 총합 계산용.
   final int pendingAmount;
   /// 다음 결제 사이클의 사용액(cycleStart~cycleEnd 내 카드 사용 합계).
-  /// statement_close_day 없으면 pendingAmount와 같음. 카드 row 표시·결제 등록
-  /// 시트 자동 합계가 이 값을 사용.
+  /// statement_close_day 없으면 pendingAmount와 같음. 카드 row 표시용.
   final int cycleAmount;
+  /// 이번 사이클 기간 내 card_payment 거래 합. 미리 결제·분할 결제 추적용.
+  /// 결제 등록 시트의 자동 채움 = cycleAmount − cycleSettled.
+  final int cycleSettled;
   /// 결제일까지 남은 일수. 음수면 결제일이 지남(등록 대기).
   final int daysUntilPayment;
   /// 결제일이 오늘 이전으로 지났는데 결제 거래가 미등록인지.
@@ -111,6 +113,7 @@ class CardSummary {
     required this.active,
     required this.pendingAmount,
     required this.cycleAmount,
+    this.cycleSettled = 0,
     required this.daysUntilPayment,
     required this.needsSettlement,
     this.cycleStart,

@@ -118,7 +118,7 @@ C:\billionaire\
 - `categories` — id, user_id, major, sub, sort_order. UNIQUE (user_id, major, sub). type은 major에서 상속.
 - `budgets` — PK (user_id, major), monthly_amount. **expense major에만 존재** (income은 budget 없음).
 - `fixed_expenses` — id, user_id, name, major, sub, amount, card, day_of_month, active, memo, sort_order, **account_id NOT NULL**, **type** ('expense'|'income'). 정기지출·정기수입 *카탈로그(템플릿)*. 로그인/거래내역 진입 시 `applyDueFixedTransactions`가 도래일 ≤ 오늘 항목을 dedupe + log 체크 후 자동 등록.
-- `fixed_apply_log` — PK (user_id, fixed_id, month). 한 번 적용된 (fixed, month) 페어 기록. 자동 적용 시 이 로그에 있는 페어는 *재적용 X* — 사용자가 거래 의도적으로 삭제해도 다시 등록 안 됨. 사용자가 직접 등록한 매칭 거래도 dedupe와 함께 log 기록 (재추가 차단). 분리 모델의 핵심.
+- `fixed_apply_log` — PK (user_id, fixed_id, month). 한 번 적용된 (fixed, month) 페어 기록. 자동 적용 시 이 로그에 있는 페어는 *재적용 X* — 사용자가 거래 의도적으로 삭제해도 다시 등록 안 됨. 사용자가 직접 등록한 매칭 거래도 dedupe와 함께 log 기록 (재추가 차단). **`updateFixedExpense`도 created_month~이전 달까지 backfill upsert** — 카테고리/이름 변경으로 dedupe key 깨져도 과거 자동 재추가 차단.
 - `ai_insights` — PK (user_id, month), content (text), generated_at. AI 분석 결과 캐시. **거래 변경 시 트리거(`tx_invalidate_ai_insights`)가 해당 월 캐시 자동 삭제**.
 
 ### 트리거/RPC
@@ -175,7 +175,9 @@ C:\billionaire\
 - 결과: 카드 한 번 긁으면 그 순간부터 총자산에 미리 반영됨. 결제일에 통장에서 빠질 때 다시 변하지 않음 — 이중 카운트 방지.
 
 ### 두 가지 카드 금액의 의미 차이
-- **사이클 사용액** (자산 탭 카드 row 큰 숫자) = 다음 결제일에 청구될 *이번 사이클*만. UI 표시용. (statement_close_day 기준)
+- **남은 청구액** (자산 탭 카드 row 큰 숫자) = `cycleAmount − cycleSettled`. 미리/분할 결제가 있으면 그만큼 줄어들어 보임. 다음 결제일에 *실제로 빠질* 금액.
+- **사이클 사용액** (`CardSummary.cycleAmount`) = 사이클 내 카드 사용 합. 결제와 무관.
+- **사이클 정산** (`CardSummary.cycleSettled`) = 지난 결제일+1 ~ 이번 결제일 사이의 card_payment 합. 결제 등록 시트 자동 채움 = cycleAmount − cycleSettled.
 - **카드 미정산** (총자산 계산용) = 모든 사용 − 모든 결제 = 전체 미상환 부채
 
 옛 사이클이 모두 결제 완료된 상태라면 미정산 = 사이클 사용 + 다음 사이클부터 추가된 사용. 그 외엔 어긋남(과거 미상환분 누적 또는 사이클 안 결제 등). **이 둘이 일치 강제될 필요 없음** — 의미가 다른 두 값.
@@ -277,6 +279,8 @@ AppRadius.sm:10 md:14 lg:18 xl:22
 - **모달/popup 안에서 displayName 같은 캐시된 값** — `AuthService.userVersion` ValueListenableBuilder로 감싸야 즉시 반영.
 - **마크다운 한글 옆 `**`/`~`** — flutter_markdown이 한글 옆 단어 경계 인식 못 해서 `**xxx**` 그대로 노출되거나 `8~9건`/`6~7건`처럼 단일 ~가 strikethrough로 매칭됨. `_normalizeBold()` 헬퍼로 클라이언트 보정.
 - **FAB hero tag 충돌** — StatefulShellRoute로 여러 탭 keep alive 시 FAB의 기본 hero tag 같으면 에러. 각 FAB에 `heroTag: 'fab_xxx'` 명시.
+- **`fixed_apply_log` upsert는 `ignoreDuplicates: true`** — 그 테이블 RLS에 INSERT/SELECT/DELETE만 있고 UPDATE 정책 없음. `upsert(onConflict: ...)` 디폴트는 conflict 시 UPDATE라 권한 에러 → ignoreDuplicates로 회피.
+- **AI 카드 명세서 import는 `csvDedupe: false`** — `importTransactions`의 dedupe key가 `카드+날짜+가맹점+금액`. 같은 매장 같은 금액으로 시간만 다른 *진짜 두 건*을 1건으로 합쳐버림. 카드사 검증 데이터라 csv 내부 중복 끄는 게 안전.
 
 ## 빌드/실행 디테일
 

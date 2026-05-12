@@ -838,14 +838,8 @@ class _FixedModalState extends State<_FixedModal> {
     final amount = AmountField.parse(_amount) ?? 0;
     final day = int.tryParse(_day.text.trim()) ?? 1;
 
-    // 편집 + 이번 달 거래 매칭 있으면 — 같이 수정 여부 다이얼로그.
-    // (registered든 dueLater(미래로 옮겨진 거래)든 transactionId 있으면 sync 의미 있음)
-    String? syncChoice; // 'sync' | 'noSync' | null(취소)
-    final stat = widget.status;
-    if (_editing && stat?.transactionId != null) {
-      syncChoice = await _askSyncDialog(stat!, day);
-      if (syncChoice == null) return; // 사용자 취소
-    }
+    // "이미 일어난 건 안 건드림" 정책 — 카탈로그 수정은 다음 자동 등록부터만 반영.
+    // 이미 등록된 거래는 사용자가 거래내역에서 직접 편집해야 함.
 
     setState(() => _saving = true);
     try {
@@ -869,24 +863,6 @@ class _FixedModalState extends State<_FixedModal> {
           clearAccountId: saveAccountId == null,
           clearCardId: saveCardId == null,
         );
-        if (syncChoice == 'sync' && stat?.transactionId != null) {
-          // 이번 달 거래도 같이 수정 — 날짜 변경된 경우 거래 date도 새 day로
-          // 옮겨서 옛 날짜에 거래 잔존하는 일 없게.
-          final ym = stat!.dueDate.substring(0, 7);
-          final newDate =
-              '$ym-${day.toString().padLeft(2, '0')}';
-          await Api.instance.updateTransaction(
-            stat.transactionId!,
-            date: newDate,
-            merchant: name,
-            majorCategory: _major,
-            subCategory: _sub ?? '',
-            amount: amount,
-            type: _type,
-            accountId: saveAccountId,
-            cardId: saveCardId,
-          );
-        }
       } else {
         await Api.instance.createFixedExpense(
           name: name,
@@ -903,7 +879,7 @@ class _FixedModalState extends State<_FixedModal> {
         );
       }
       if (!mounted) return;
-      showToast(context, _saveToastMessage(syncChoice, day));
+      showToast(context, _saveToastMessage(day));
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
@@ -912,172 +888,21 @@ class _FixedModalState extends State<_FixedModal> {
     }
   }
 
-  /// 편집 시 이번 달 거래도 같이 수정할지 묻는 다이얼로그.
-  /// 헤더 우상단 X로 취소 + 본문 아래 가로 두 버튼 (secondary | primary).
-  /// newDay가 미래 일자면 "거래내역에서 도래일까지 안 보임" 사전 안내 추가.
-  Future<String?> _askSyncDialog(FixedStatus stat, int newDay) async {
-    final mdLabel = _mdLabel(stat.registeredDate ?? stat.dueDate);
-    // 새 일자가 today 이후인지 — 그러면 거래가 미래로 옮겨져서 도래일까지 거래내역 미노출.
-    final ym = stat.dueDate.substring(0, 7);
-    final newDateStr = '$ym-${newDay.toString().padLeft(2, '0')}';
-    final now = DateTime.now();
-    final todayStr =
-        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    final movesToFuture = newDateStr.compareTo(todayStr) > 0;
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-        ),
-        backgroundColor: AppColors.surface,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(
-                        '이번 달 거래도 같이 바꿀까요?',
-                        style: TextStyle(
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.text,
-                        ),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(ctx).pop(null),
-                    icon: Icon(Icons.close, color: AppColors.text3),
-                    iconSize: 20,
-                    padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(minWidth: 32, minHeight: 32),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Text(
-                  '$mdLabel에 이미 등록된 거래가 있어요. 정기 거래만 바꾸면 다음 달부터 새 정보로 등록되고, 이번 달 거래는 그대로 유지돼요.',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: AppColors.text2,
-                    height: 1.55,
-                  ),
-                ),
-              ),
-              if (movesToFuture) ...[
-                const SizedBox(height: 10),
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.fromLTRB(10, 8, 10, 8),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface2,
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                    ),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.info_outline,
-                            size: 14, color: AppColors.text3),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            '"이번 달도 같이" 누르면 거래 날짜가 ${now.month}/$newDay로 옮겨져요. 도래일까지 거래내역에 안 보이고 자산에서도 빠지지 않아요.',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.text3,
-                              height: 1.5,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 18),
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () =>
-                            Navigator.of(ctx).pop('noSync'),
-                        style: OutlinedButton.styleFrom(
-                          minimumSize: const Size(0, 44),
-                          side: BorderSide(color: AppColors.line),
-                          foregroundColor: AppColors.text,
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 8),
-                        ),
-                        child: const Text(
-                          '다음 달부터만',
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: () => Navigator.of(ctx).pop('sync'),
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size(0, 44),
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 8),
-                        ),
-                        child: const Text(
-                          '이번 달도 같이',
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   /// 저장 후 사용자에게 보여줄 토스트 메시지 — 상태에 따라 명확한 안내.
-  String _saveToastMessage(String? syncChoice, int newDay) {
+  /// "이미 일어난 건 안 건드림" 정책 — 이번 달에 이미 등록된 거래는 그대로 두고
+  /// 카탈로그 수정은 *다음 자동 등록*부터만 반영된다.
+  String _saveToastMessage(int newDay) {
     if (!_editing) return '등록했어요';
-    // 비활성으로 바꿨으면 자동 등록 안 됨 — 자동 등록 안내문 잘못 노출 방지.
     if (!_active) return '비활성으로 변경됐어요. 자동 등록 안 돼요';
     final stat = widget.status;
     final newDayLabel = '$newDay일';
     switch (stat?.status) {
       case 'registered':
-        return syncChoice == 'sync'
-            ? '이번 달 거래도 함께 수정됐어요'
-            : '다음 달 $newDayLabel부터 새 정보로 등록돼요';
+      case 'skipped':
+        return '다음 달 $newDayLabel부터 새 정보로 등록돼요';
       case 'dueLater':
       case 'pending':
         return '이번 달 $newDayLabel부터 새 정보로 자동 등록돼요';
-      case 'skipped':
-        return '다음 달 $newDayLabel부터 새 정보로 등록돼요';
       default:
         return '수정했어요';
     }

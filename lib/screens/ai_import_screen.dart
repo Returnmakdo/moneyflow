@@ -664,8 +664,13 @@ class _AiImportScreenState extends State<AiImportScreen> {
 
     setState(() => _importing = true);
     try {
-      // 1) 카드 사용 거래 일괄 등록.
-      final result = await Api.instance.importTransactions(finalRows);
+      // 1) 카드 사용 거래 일괄 등록. csvDedupe=false — 카드사 명세서는 같은 날
+      // 같은 가맹점·금액으로 시간만 다른 *진짜 거래*가 흔히 있어서(예: 같은 매장
+      // 두 번 결제) dedupe key가 합쳐버리면 안 됨. DB 중복 체크(dbDup)는 유지.
+      final result = await Api.instance.importTransactions(
+        finalRows,
+        csvDedupe: false,
+      );
       final n = result.inserted;
       final dupSkipped = result.totalSkipped;
       // 토스트용 dup 설명 — DB 중복 / CSV 안 중복 분리.

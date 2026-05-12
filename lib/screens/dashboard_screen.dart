@@ -355,7 +355,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         label: '일평균 지출',
         value: smartWon(d.dailyAvg),
         accent: KpiAccent.neutral,
-        delta: '이번 달 누적 기준',
+        delta: '고정지출 제외',
       ),
     ];
 

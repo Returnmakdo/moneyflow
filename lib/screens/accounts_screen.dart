@@ -11,6 +11,7 @@ import '../widgets/amount_field.dart';
 import '../widgets/asset_trend_chart.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
+import '../widgets/ko_date_picker.dart';
 import '../widgets/skeleton.dart';
 import 'shell_screen.dart';
 
@@ -26,6 +27,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
   AssetSnapshot? _snapshot;
   Object? _error;
   bool _reloadScheduled = false;
+  final ScrollController _scrollCtrl = ScrollController();
 
   late final Listenable _apiListenable = Listenable.merge([
     Api.instance.accountsVersion,
@@ -44,6 +46,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
   void dispose() {
     _apiListenable.removeListener(_onApiChanged);
     ShellTabSignals.accountsTab.removeListener(_onTabPressed);
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -58,6 +61,13 @@ class _AccountsScreenState extends State<AccountsScreen> {
 
   void _onTabPressed() {
     if (!mounted) return;
+    if (_scrollCtrl.hasClients) {
+      _scrollCtrl.animateTo(
+        0,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
     _reload();
   }
 
@@ -231,6 +241,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
                 return Center(child: Text(errorMessage(_error!)));
               }
               return ListView(
+                controller: _scrollCtrl,
                 padding: const EdgeInsets.fromLTRB(0, 0, 0, 90),
                 children: [
                   const PageHeader(
@@ -371,6 +382,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
               }
             }
             return ListView.builder(
+              controller: _scrollCtrl,
               padding: const EdgeInsets.fromLTRB(0, 0, 0, 90),
               itemCount: items.length,
               itemBuilder: (ctx, i) => items[i](ctx),
@@ -548,6 +560,24 @@ class _CardCard extends StatelessWidget {
         : (card.daysUntilPayment == 0
             ? '오늘 결제'
             : 'D-${card.daysUntilPayment}');
+    // 메타 라인 — "매월 N일 결제 · 연동 계좌". 빡빡함 줄이려고 두 줄을 한 줄로.
+    final metaParts = <String>['매월 ${card.paymentDay}일 결제'];
+    final linked = card.linkedAccountName;
+    if (linked != null && linked.isNotEmpty) metaParts.add(linked);
+    final metaText = metaParts.join(' · ');
+    // 사이클 + D-day 한 줄로 우측 작게.
+    String? rightMeta;
+    if (card.cycleStart != null && card.cycleEnd != null) {
+      rightMeta =
+          '${_shortMD(card.cycleStart!)}~${_shortMD(card.cycleEnd!)} · $dLabel';
+    } else {
+      rightMeta = dLabel;
+    }
+    // 카드 row 큰 숫자 — *남은* 청구액(사용액 − 이번 사이클에 이미 결제한 금액).
+    // 미리 결제·분할 결제하면 그만큼 줄어들어 보임 — 사용자 직관(토스/뱅샐 톤).
+    // 음수 가능 (과결제) → 0으로 클램프.
+    final remainingBilling = (card.cycleAmount - card.cycleSettled)
+        .clamp(0, 1 << 31);
     return AppCard(
       padding: EdgeInsets.zero,
       child: Column(
@@ -557,7 +587,7 @@ class _CardCard extends StatelessWidget {
               onTap: onTap,
               borderRadius: BorderRadius.circular(AppRadius.xl),
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 14, 12, 14),
+                padding: const EdgeInsets.fromLTRB(18, 14, 4, 14),
                 child: Row(
                   children: [
                     Container(
@@ -576,7 +606,6 @@ class _CardCard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // 카드 이름 단독 — 우측 사용액이 커도 이름은 항상 보이게.
                           Text(
                             card.name,
                             maxLines: 1,
@@ -589,17 +618,7 @@ class _CardCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            '매월 ${card.paymentDay}일 결제',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.text3,
-                            ),
-                          ),
-                          const SizedBox(height: 1),
-                          Text(
-                            card.linkedAccountName ?? '계좌',
+                            metaText,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -613,23 +632,8 @@ class _CardCard extends StatelessWidget {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        if (card.cycleStart != null &&
-                            card.cycleEnd != null)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 2),
-                            child: Text(
-                              '${_shortMD(card.cycleStart!)} ~ ${_shortMD(card.cycleEnd!)}',
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: AppColors.text3,
-                                fontFeatures: const [
-                                  FontFeature.tabularFigures()
-                                ],
-                              ),
-                            ),
-                          ),
                         Text(
-                          '${won(card.cycleAmount)}원',
+                          '${won(remainingBilling)}원',
                           style: TextStyle(
                             fontSize: 14.5,
                             fontWeight: FontWeight.w700,
@@ -639,33 +643,40 @@ class _CardCard extends StatelessWidget {
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          dLabel,
+                          rightMeta,
                           style: TextStyle(
                             fontSize: 11,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: needsSettle
+                                ? FontWeight.w700
+                                : FontWeight.w500,
                             color: needsSettle
                                 ? AppColors.danger
                                 : AppColors.text4,
+                            fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
+                        if (card.cycleSettled > 0) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            '${won(card.cycleSettled)}원 결제됨',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.success,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures()
+                              ],
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                     IconButton(
-                      onPressed: onEdit,
-                      tooltip: '카드 정보 수정',
+                      onPressed: () => _showCardActions(context),
+                      tooltip: '카드 메뉴',
                       visualDensity: VisualDensity.compact,
                       icon: Icon(
-                        Icons.edit_outlined,
-                        color: AppColors.text3,
-                        size: 19,
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: onDelete,
-                      tooltip: '삭제',
-                      visualDensity: VisualDensity.compact,
-                      icon: Icon(
-                        Icons.delete_outline,
+                        Icons.more_vert,
                         color: AppColors.text3,
                         size: 20,
                       ),
@@ -714,6 +725,118 @@ class _CardCard extends StatelessWidget {
         ),
     );
   }
+
+  /// 카드 메뉴 시트 — 우측 ⋮ 탭 시. 편집·결제 등록·삭제 한 곳에 모아 행 자체의
+  /// 시각 무게를 줄임.
+  void _showCardActions(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppRadius.xl),
+        ),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.line,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+                child: Row(
+                  children: [
+                    Text(
+                      card.name,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.text,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _CardActionTile(
+                icon: Icons.edit_outlined,
+                label: '카드 정보 수정',
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  onEdit();
+                },
+              ),
+              _CardActionTile(
+                icon: Icons.receipt_long_outlined,
+                label: '청구액 결제 등록',
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  onSettle();
+                },
+              ),
+              _CardActionTile(
+                icon: Icons.delete_outline,
+                label: '카드 삭제',
+                danger: true,
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  onDelete();
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _CardActionTile extends StatelessWidget {
+  const _CardActionTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.danger = false,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = danger ? AppColors.danger : AppColors.text;
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: color),
+            const SizedBox(width: 14),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// 카드 결제일 정산 시트 — 자동 합계 + 사용자 수정 + 청구일 입력.
@@ -734,7 +857,10 @@ class _CardSettlementSheetState extends State<_CardSettlementSheet> {
   void initState() {
     super.initState();
     _amountCtrl = TextEditingController();
-    AmountField.setNumber(_amountCtrl, widget.card.cycleAmount);
+    // 자동 채움 = 사이클 사용액 − 이번 사이클에 이미 결제한 금액. 미리·분할 결제도
+    // 자연스럽게 *남은* 청구액으로 채워짐. 음수가 되면 0으로 클램프(과결제 상태).
+    final remaining = widget.card.cycleAmount - widget.card.cycleSettled;
+    AmountField.setNumber(_amountCtrl, remaining > 0 ? remaining : 0);
     // 기본 청구일 — 이번 달 결제일.
     final now = DateTime.now();
     final pay = DateTime(now.year, now.month, widget.card.paymentDay);
@@ -749,6 +875,39 @@ class _CardSettlementSheetState extends State<_CardSettlementSheet> {
     _amountCtrl.dispose();
     _dateCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickDate() async {
+    // 결제 거래는 *실제로 통장에서 빠지는 시점*이라 미래 일자 허용 — 결제일이
+    // 며칠 후라면 그 날짜로 등록해도 자산은 도래 후 반영(미래 거래 제외 로직).
+    final now = DateTime.now();
+    final initial = DateTime.tryParse(_dateCtrl.text) ?? now;
+    final picked = await showKoDatePicker(
+      context: context,
+      initial: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(now.year + 5),
+    );
+    if (picked != null) {
+      _dateCtrl.text =
+          '${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      setState(() {});
+    }
+  }
+
+  /// 청구액 입력란 아래 안내 — 미리 결제·분할 결제 상황을 보여줘서 사용자가
+  /// 자동 채움 값이 왜 그렇게 들어갔는지 이해할 수 있게.
+  String _autoFillHint() {
+    final cycle = widget.card.cycleAmount;
+    final settled = widget.card.cycleSettled;
+    if (settled <= 0) {
+      return '사이클 사용액 ${won(cycle)}원이 자동으로 채워졌어요. 카드사 명세서 보고 다르면 수정.';
+    }
+    final remaining = cycle - settled;
+    if (remaining > 0) {
+      return '사이클 사용액 ${won(cycle)}원 중 이미 ${won(settled)}원이 결제됐어요. 남은 ${won(remaining)}원이 채워졌어요.';
+    }
+    return '사이클 사용액 ${won(cycle)}원이 이미 결제 완료됐어요 (${won(settled)}원). 추가 등록할 금액을 직접 입력해주세요.';
   }
 
   Future<void> _save() async {
@@ -840,7 +999,7 @@ class _CardSettlementSheetState extends State<_CardSettlementSheet> {
               AmountField(controller: _amountCtrl, label: '청구액'),
               const SizedBox(height: 6),
               Text(
-                '사이클 사용액 ${won(widget.card.cycleAmount)}원이 자동으로 채워졌어요. 카드사 명세서 보고 다르면 수정.',
+                _autoFillHint(),
                 style: TextStyle(
                   fontSize: 11.5,
                   color: AppColors.text3,
@@ -848,11 +1007,20 @@ class _CardSettlementSheetState extends State<_CardSettlementSheet> {
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: _dateCtrl,
-                decoration: const InputDecoration(
-                  labelText: '결제일',
-                  hintText: 'YYYY-MM-DD',
+              GestureDetector(
+                onTap: _pickDate,
+                child: AbsorbPointer(
+                  child: TextField(
+                    controller: _dateCtrl,
+                    decoration: InputDecoration(
+                      labelText: '결제일',
+                      suffixIcon: Icon(
+                        Icons.calendar_today,
+                        size: 18,
+                        color: AppColors.text3,
+                      ),
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 22),
