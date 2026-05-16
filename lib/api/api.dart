@@ -389,21 +389,24 @@ class Api {
       return const ImportDupPreview(dbDup: 0, csvDup: 0);
     }
     final defaultId = await _defaultAccountId();
+    // key에 type 포함 — 같은 가맹점·날·금액의 income과 expense가 동시 들어가도
+    // 한쪽이 dbDup으로 빠지지 않게(예: 환불·이체 라벨링 케이스).
     String keyFor({
       int? cardId,
       int? accountId,
       required String date,
       required int amount,
       String? merchant,
+      required String type,
     }) {
       final ref = cardId != null ? 'c$cardId' : 'a$accountId';
-      return '$ref|$date|$amount|${merchant ?? ""}';
+      return '$type|$ref|$date|$amount|${merchant ?? ""}';
     }
 
     final dates = rows.map((r) => r.date).toList()..sort();
     final existingRows = await sb
         .from('transactions')
-        .select('date, amount, merchant, card_id, account_id')
+        .select('date, amount, merchant, card_id, account_id, type')
         .gte('date', dates.first)
         .lte('date', dates.last);
     final existingKeys = <String>{};
@@ -415,6 +418,7 @@ class Api {
         date: m['date'] as String,
         amount: (m['amount'] as num).toInt(),
         merchant: m['merchant'] as String?,
+        type: (m['type'] as String?) ?? 'expense',
       ));
     }
 
@@ -429,6 +433,7 @@ class Api {
         date: r.date,
         amount: r.amount,
         merchant: r.merchant,
+        type: r.type,
       );
       if (existingKeys.contains(key)) {
         dbDup++;
@@ -490,7 +495,16 @@ class Api {
     for (final t in ['expense', 'income']) {
       final news = newMajorsByType[t]!;
       if (news.isEmpty) continue;
-      var nextOrder = existingNamesByType[t]!.length;
+      // 기존 majors의 MAX(sort_order)+1부터 — `existingNames.length`로 시작하면
+      // sort_order에 빈 값/큰 값 섞여있을 때 중복 발생해서 정렬 깨짐.
+      final maxRow = await sb
+          .from('majors')
+          .select('sort_order')
+          .eq('type', t)
+          .order('sort_order', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      var nextOrder = ((maxRow?['sort_order'] as num?)?.toInt() ?? -1) + 1;
       await sb.from('majors').insert([
         for (final m in news)
           {
@@ -525,16 +539,18 @@ class Api {
     final defaultId = await _defaultAccountId();
 
     // dedupe — 같은 명세서 두 번 올려도 중복 등록 안 되게.
-    // (card_id 또는 account_id, date, amount, merchant) 조합이 이미 있으면 skip.
+    // (type, card_id 또는 account_id, date, amount, merchant) 조합이 이미 있으면 skip.
+    // key에 type 포함 — 같은 가맹점·날·금액 income/expense 동시 보호 (예: 환불).
     String keyFor({
       int? cardId,
       int? accountId,
       required String date,
       required int amount,
       String? merchant,
+      required String type,
     }) {
       final ref = cardId != null ? 'c$cardId' : 'a$accountId';
-      return '$ref|$date|$amount|${merchant ?? ""}';
+      return '$type|$ref|$date|$amount|${merchant ?? ""}';
     }
 
     final dates = rows.map((r) => r.date).toList()..sort();
@@ -542,7 +558,7 @@ class Api {
     final maxDate = dates.last;
     final existingRows = await sb
         .from('transactions')
-        .select('date, amount, merchant, card_id, account_id')
+        .select('date, amount, merchant, card_id, account_id, type')
         .gte('date', minDate)
         .lte('date', maxDate);
     final existingKeys = <String>{};
@@ -554,6 +570,7 @@ class Api {
         date: m['date'] as String,
         amount: (m['amount'] as num).toInt(),
         merchant: m['merchant'] as String?,
+        type: (m['type'] as String?) ?? 'expense',
       ));
     }
 
@@ -569,6 +586,7 @@ class Api {
         date: r.date,
         amount: r.amount,
         merchant: r.merchant,
+        type: r.type,
       );
       if (existingKeys.contains(key)) {
         dbDup++;
@@ -671,21 +689,41 @@ class Api {
     final clean = newName.trim();
     if (clean.isEmpty) throw Exception('새 이름이 필요합니다.');
     if (clean == oldName) return;
+    // user_id 명시 — RLS 의존 외 방어 깊이. 본인 majors의 같은 이름만 잡아야
+    // 다른 사용자 데이터 영향 X (cascade update도 모두 본인 row만 대상).
+    final uid = _uid();
     final dup = await sb
         .from('majors')
         .select('major')
+        .eq('user_id', uid)
         .eq('major', clean)
         .maybeSingle();
     if (dup != null) throw Exception('같은 이름의 카테고리가 이미 있습니다.');
-    await sb.from('majors').update({'major': clean}).eq('major', oldName);
-    await sb.from('categories').update({'major': clean}).eq('major', oldName);
-    await sb.from('budgets').update({'major': clean}).eq('major', oldName);
+    await sb
+        .from('majors')
+        .update({'major': clean})
+        .eq('user_id', uid)
+        .eq('major', oldName);
+    await sb
+        .from('categories')
+        .update({'major': clean})
+        .eq('user_id', uid)
+        .eq('major', oldName);
+    await sb
+        .from('budgets')
+        .update({'major': clean})
+        .eq('user_id', uid)
+        .eq('major', oldName);
     await sb
         .from('transactions')
-        .update({'major_category': clean}).eq('major_category', oldName);
+        .update({'major_category': clean})
+        .eq('user_id', uid)
+        .eq('major_category', oldName);
     await sb
         .from('fixed_expenses')
-        .update({'major': clean}).eq('major', oldName);
+        .update({'major': clean})
+        .eq('user_id', uid)
+        .eq('major', oldName);
     invalidateTx();
     majorsVersion.value++;
     categoriesVersion.value++;
@@ -1119,7 +1157,7 @@ class Api {
           .from('transactions')
           .select('id, date, merchant, major_category, type, is_fixed')
           .gte('date', '$month-01')
-          .lte('date', '$month-31'),
+          .lte('date', _lastDayOf(month)),
       sb.from('fixed_apply_log').select('fixed_id').eq('month', month),
     ]);
     final fxs = results[0] as List;
@@ -1274,6 +1312,24 @@ class Api {
     if (cardId != null) payload['card_id'] = cardId;
     if (clearCardId) payload['card_id'] = null;
     if (type != null) payload['type'] = type;
+    // type 변경 시 CHECK constraint(`fx_account_or_card`) 정합성 자동 보강:
+    //   type='income'은 카드 결제 불가 → card_id NULL 강제.
+    //   type='expense'이고 호출자가 card/account 명시 안 했으면 기존 row 유지.
+    // 호출자가 매번 정확히 명시해주면 영향 없는 방어 코드.
+    if (type == 'income') {
+      payload['card_id'] = null;
+      // account_id가 명시 안 됐고 기존 row가 card 결제였다면 default로 채워야 함.
+      if (!payload.containsKey('account_id')) {
+        final cur = await sb
+            .from('fixed_expenses')
+            .select('account_id')
+            .eq('id', id)
+            .maybeSingle();
+        if (cur == null || cur['account_id'] == null) {
+          payload['account_id'] = await _defaultAccountId();
+        }
+      }
+    }
     final row = await sb
         .from('fixed_expenses')
         .update(payload)
@@ -1364,7 +1420,7 @@ class Api {
       upTo =
           '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
     } else if (month.compareTo(ymToday) < 0) {
-      upTo = '$month-31';
+      upTo = _lastDayOf(month);
     } else {
       return 0;
     }
@@ -1384,7 +1440,7 @@ class Api {
         .from('transactions')
         .select('merchant, major_category, is_fixed, type')
         .gte('date', '$month-01')
-        .lte('date', '$month-31');
+        .lte('date', _lastDayOf(month));
     final existExpense = <String>{
       for (final e in existing as List)
         if ((e['is_fixed'] as num?)?.toInt() == 1 && e['type'] != 'income')
@@ -1395,8 +1451,9 @@ class Api {
         if (e['type'] == 'income')
           '${e['merchant']}|${e['major_category']}',
     };
-    final toInsert = <Map<String, dynamic>>[];
-    final toLog = <Map<String, dynamic>>[];
+    // candidate = (fxId, 그 fxId에 INSERT할 transactions payload 또는 null).
+    // 매칭 거래 이미 있는 케이스(has=true)는 payload=null로 log만 박을 후보.
+    final candidates = <(int, Map<String, dynamic>?)>[];
     for (final it in items) {
       final fxId = (it['id'] as num).toInt();
       if (appliedIds.contains(fxId)) continue; // 이미 적용 완료
@@ -1420,14 +1477,14 @@ class Api {
           ? existIncome.contains(key)
           : existExpense.contains(key);
       if (has) {
-        // 사용자가 이미 직접 등록 — log만 기록해서 다음에 삭제해도 재등록 X.
-        toLog.add({'user_id': userId, 'fixed_id': fxId, 'month': month});
+        // 매칭 거래 이미 있음 — log만 박아서 사용자가 그 거래 삭제해도 재등록 X.
+        candidates.add((fxId, null));
         continue;
       }
       if (date.compareTo(upTo) > 0) continue; // 도래 안 함 — 다음 호출에서 처리
       final fxCardId = (it['card_id'] as num?)?.toInt();
       final fxAccountId = (it['account_id'] as num?)?.toInt();
-      toInsert.add({
+      final payload = <String, dynamic>{
         'user_id': userId,
         'date': date,
         'card': null,
@@ -1440,17 +1497,37 @@ class Api {
         'account_id': fxCardId != null ? null : fxAccountId,
         'card_id': fxCardId,
         'type': fxType,
-      });
-      toLog.add({'user_id': userId, 'fixed_id': fxId, 'month': month});
+      };
+      candidates.add((fxId, payload));
+    }
+    if (candidates.isEmpty) return 0;
+
+    // race fix — log INSERT를 *먼저* 시도 (ignoreDuplicates + select returning).
+    // PK (user_id, fixed_id, month) unique constraint로 *first wins*가 보장됨.
+    // 멀티탭/멀티디바이스 동시 호출 시 두 번째 process는 returning이 빈 list라
+    // transactions 중복 INSERT 차단.
+    final logPayload = candidates
+        .map((c) => {'user_id': userId, 'fixed_id': c.$1, 'month': month})
+        .toList();
+    final logInserted = await sb.from('fixed_apply_log').upsert(
+          logPayload,
+          onConflict: 'user_id,fixed_id,month',
+          ignoreDuplicates: true,
+        ).select('fixed_id');
+    final winningFxIds = <int>{
+      for (final r in logInserted as List) (r['fixed_id'] as num).toInt(),
+    };
+
+    // log 차지에 성공한 candidate의 transactions만 INSERT.
+    final toInsert = <Map<String, dynamic>>[];
+    for (final c in candidates) {
+      if (!winningFxIds.contains(c.$1)) continue;
+      if (c.$2 == null) continue; // 매칭 케이스 — log만 박고 끝
+      toInsert.add(c.$2!);
     }
     if (toInsert.isNotEmpty) {
       await sb.from('transactions').insert(toInsert);
       invalidateTx();
-    }
-    if (toLog.isNotEmpty) {
-      await sb
-          .from('fixed_apply_log')
-          .upsert(toLog, onConflict: 'user_id,fixed_id,month');
     }
     return toInsert.length;
   }
@@ -1465,7 +1542,7 @@ class Api {
         .from('transactions')
         .select('merchant, major_category, is_fixed, type')
         .gte('date', '$month-01')
-        .lte('date', '$month-31');
+        .lte('date', _lastDayOf(month));
     // expense는 is_fixed=1 거래로 dedupe, income은 type='income' 거래면
     // is_fixed 무관하게 dedupe (사용자가 직접 등록한 income도 중복 방지).
     final existExpense = <String>{
@@ -1663,27 +1740,40 @@ class Api {
     final cards = results[1] as List<CreditCard>;
     final txs = results[2] as List<Tx>;
 
-    // 계좌별 잔고 변화. 카드 사용(expense + card_id)은 계좌 영향 X.
-    int accDelta(int accId, Tx t) {
-      if (t.type == 'expense' && t.cardId == null && t.accountId == accId) {
-        return -t.amount;
+    // 거래 한 건의 계좌·카드 영향을 byAcc/byCard 맵에 직접 누적.
+    // 거래의 account_id/card_id로 즉시 매핑 — 기존엔 거래 × (계좌+카드) iteration이라
+    // 1년+ 사용자에서 체감. O(N) → O(N + M + K).
+    void applyDelta(Tx t, Map<int, int> byAcc, Map<int, int> byCard) {
+      void addAcc(int? accId, int delta) {
+        if (accId == null) return;
+        final cur = byAcc[accId];
+        if (cur != null) byAcc[accId] = cur + delta;
       }
-      if (t.type == 'income' && t.accountId == accId) return t.amount;
-      if (t.type == 'transfer') {
-        if (t.toAccountId == accId) return t.amount;
-        if (t.fromAccountId == accId) return -t.amount;
+      void addCard(int? cardId, int delta) {
+        if (cardId == null) return;
+        final cur = byCard[cardId];
+        if (cur != null) byCard[cardId] = cur + delta;
       }
-      if (t.type == 'card_payment' && t.fromAccountId == accId) {
-        return -t.amount;
+      switch (t.type) {
+        case 'expense':
+          if (t.cardId != null) {
+            addCard(t.cardId, t.amount);
+          } else {
+            addAcc(t.accountId, -t.amount);
+          }
+          break;
+        case 'income':
+          addAcc(t.accountId, t.amount);
+          break;
+        case 'transfer':
+          addAcc(t.fromAccountId, -t.amount);
+          addAcc(t.toAccountId, t.amount);
+          break;
+        case 'card_payment':
+          addAcc(t.fromAccountId, -t.amount);
+          addCard(t.cardId, -t.amount);
+          break;
       }
-      return 0;
-    }
-
-    // 카드별 부채 변화. 사용은 +, 결제는 −.
-    int cardDelta(int cardId, Tx t) {
-      if (t.type == 'expense' && t.cardId == cardId) return t.amount;
-      if (t.type == 'card_payment' && t.cardId == cardId) return -t.amount;
-      return 0;
     }
 
     // 미래 일자 거래는 자산 계산에서 제외 — 정기지출 일괄 등록을 미리 눌러도
@@ -1693,15 +1783,16 @@ class Api {
     final todayStr =
         '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
 
-    // 현재 계좌 잔고
+    // 현재 계좌 잔고 + 카드 부채 — 거래 *1회 순회*로 같이 누적.
+    // 기존 코드는 거래 N건 × (계좌 M + 카드 K) iteration이었음 — 1년+ 사용자에서
+    // 체감. 거래의 account_id/card_id로 직접 매핑하면 O(N + M + K).
     final currentByAcc = <int, int>{
       for (final a in accounts) a.id: a.initialBalance,
     };
+    final debtByCard = <int, int>{for (final c in cards) c.id: 0};
     for (final t in txs) {
       if (t.date.compareTo(todayStr) > 0) continue;
-      for (final a in accounts) {
-        currentByAcc[a.id] = currentByAcc[a.id]! + accDelta(a.id, t);
-      }
+      applyDelta(t, currentByAcc, debtByCard);
     }
     final perAccount = accounts
         .map((a) => AccountBalance(
@@ -1716,16 +1807,12 @@ class Api {
     final accountsBalance =
         perAccount.fold<int>(0, (s, a) => s + a.balance);
 
-    // 카드별 미정산 부채 — 미래 일자 거래 제외 (자산 계산과 일관).
+    // 카드별 미정산 부채 — 위 루프에서 이미 계산됨 (debtByCard).
     final accountNames = {for (final a in accounts) a.id: a.name};
     final cardSummaries = <CardSummary>[];
     var cardDebtTotal = 0;
     for (final c in cards) {
-      var debt = 0;
-      for (final t in txs) {
-        if (t.date.compareTo(todayStr) > 0) continue;
-        debt += cardDelta(c.id, t);
-      }
+      final debt = debtByCard[c.id] ?? 0;
       // 결제일까지 D-일 (이번 달 결제일 또는 다음 달).
       // paymentDay가 month 일수보다 크면 그 month 마지막 날로 clamp.
       // 예: paymentDay=31 + 2월(28/29일) → 2/28(또는 29)에 결제. 윤년 자동.
@@ -1867,7 +1954,7 @@ class Api {
     for (final ym in months) {
       // 이번 달 cutoff은 오늘 — 미래 일자 거래(예정)는 자산 추이에 미포함.
       // 과거 월은 그 월 말일까지 누적.
-      final monthEnd = '$ym-31';
+      final monthEnd = _lastDayOf(ym);
       final cutoff =
           monthEnd.compareTo(todayStr) > 0 ? todayStr : monthEnd;
       final byAcc = <int, int>{
@@ -1876,12 +1963,7 @@ class Api {
       final byCard = <int, int>{for (final c in cards) c.id: 0};
       for (final t in txs) {
         if (t.date.compareTo(cutoff) > 0) continue;
-        for (final a in accounts) {
-          byAcc[a.id] = byAcc[a.id]! + accDelta(a.id, t);
-        }
-        for (final c in cards) {
-          byCard[c.id] = byCard[c.id]! + cardDelta(c.id, t);
-        }
+        applyDelta(t, byAcc, byCard);
       }
       final monthAccounts = accounts.fold<int>(
           0, (s, a) => s + (byAcc[a.id] ?? a.initialBalance));
@@ -2038,39 +2120,31 @@ class Api {
   /// - 그 합만큼 linked_account.initial_balance에서 빼서 시작잔고 역보정
   /// - cards.auto_settled_at 초기화 (다시 import 시 자동 정리 다이얼로그 정상 동작)
   /// 반환: 삭제된 거래 건수.
+  ///
+  /// race 보호 — DELETE … RETURNING 패턴으로 *실제 삭제된 row만* 차감. 두 번
+  /// 동시 호출돼도 두 번째는 0건 반환받아서 이중 차감 안 됨.
   Future<int> rollbackAutoSettlement(int cardId) async {
-    // 자동 정리 거래 조회 (메모 기준).
-    final rows = await sb
+    // 거래 삭제 + 삭제된 row 반환 (atomic). 다른 process가 같은 시점에 호출해도
+    // 첫 호출만 returning에 row 잡고 두 번째는 빈 list — 이중 차감 차단.
+    final deletedRows = await sb
         .from('transactions')
-        .select('id, amount, from_account_id')
+        .delete()
         .eq('card_id', cardId)
         .eq('type', 'card_payment')
-        .eq('memo', 'CSV 가져오기 자동 정리');
-    final list = rows as List;
-    if (list.isEmpty) {
-      // 거래 없어도 마킹은 비움.
-      await sb
-          .from('cards')
-          .update({'auto_settled_at': null}).eq('id', cardId);
-      invalidateCards();
-      return 0;
-    }
+        .eq('memo', 'CSV 가져오기 자동 정리')
+        .select('amount, from_account_id');
+    final list = deletedRows as List;
     // 시작잔고에서 빼야 할 금액을 통장별로 합산 (보통 한 통장).
     final byAccount = <int, int>{};
-    final ids = <int>[];
     for (final r in list) {
       final m = r as Map<String, dynamic>;
-      final id = (m['id'] as num).toInt();
       final amount = (m['amount'] as num).toInt();
       final accId = (m['from_account_id'] as num?)?.toInt();
       if (accId != null) {
         byAccount[accId] = (byAccount[accId] ?? 0) + amount;
       }
-      ids.add(id);
     }
-    // 거래 삭제.
-    await sb.from('transactions').delete().inFilter('id', ids);
-    // 통장 시작잔고 역보정.
+    // 통장 시작잔고 역보정 — 실제 삭제된 거래 합만큼.
     for (final entry in byAccount.entries) {
       final accRow = await sb
           .from('accounts')
@@ -2083,14 +2157,16 @@ class Api {
           .update({'initial_balance': cur - entry.value})
           .eq('id', entry.key);
     }
-    // 카드 마킹 초기화.
+    // 카드 마킹 초기화 (거래 0건이어도 실행 — 마킹만 남은 상태 정리).
     await sb
         .from('cards')
         .update({'auto_settled_at': null}).eq('id', cardId);
-    invalidateTx();
-    invalidateAccounts();
+    if (list.isNotEmpty) {
+      invalidateTx();
+      invalidateAccounts();
+    }
     invalidateCards();
-    return ids.length;
+    return list.length;
   }
 
   /// 카드 삭제. transactions에서 사용 중이면 throw (FK ON DELETE RESTRICT).
@@ -2113,9 +2189,13 @@ class Api {
   Future<int> _defaultAccountId() async {
     final cached = _defaultAccountIdCache;
     if (cached != null) return cached;
+    // user_id 명시 — RLS가 막아주긴 하지만 방어 깊이로 둠. onAuthStateChange가
+    // 캐시 invalidate 비동기로 도는데, 그 사이 다른 사용자 계좌가 잡힐 위험 차단.
+    final uid = _uid();
     final byName = await sb
         .from('accounts')
         .select('id, name')
+        .eq('user_id', uid)
         .inFilter('name', ['생활비', '기본'])
         .eq('active', 1)
         .order('sort_order', ascending: true)
@@ -2129,6 +2209,7 @@ class Api {
     final firstActive = await sb
         .from('accounts')
         .select('id')
+        .eq('user_id', uid)
         .eq('active', 1)
         .order('sort_order', ascending: true)
         .order('id', ascending: true)
@@ -2335,7 +2416,7 @@ class Api {
         .from('transactions')
         .select('merchant, major_category, is_fixed, type')
         .gte('date', '$month-01')
-        .lte('date', '$month-31');
+        .lte('date', _lastDayOf(month));
     // expense는 is_fixed=1 거래로 dedupe, income은 type='income' 거래면
     // is_fixed 무관하게 dedupe (사용자가 직접 등록한 income도 중복 방지).
     final existExpense = <String>{
@@ -2382,6 +2463,14 @@ int _clampDay(int day, {String? month}) {
   final parts = month.split('-').map(int.parse).toList();
   final lastDay = DateTime(parts[0], parts[1] + 1, 0).day;
   return math.min(d, lastDay);
+}
+
+/// YYYY-MM-DD 형식의 그 달 마지막 날. 2월·4·6·9·11월 자동 처리(윤년 포함).
+/// query의 `.lte('date', '$month-31')` 같은 문자열 hack 대신 명시.
+String _lastDayOf(String ym) {
+  final parts = ym.split('-').map(int.parse).toList();
+  final last = DateTime(parts[0], parts[1] + 1, 0);
+  return '${last.year}-${last.month.toString().padLeft(2, '0')}-${last.day.toString().padLeft(2, '0')}';
 }
 
 /// CSV 한 필드 escape — 콤마/큰따옴표/줄바꿈 포함 시 큰따옴표로 감쌈.

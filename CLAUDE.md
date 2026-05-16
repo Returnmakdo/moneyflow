@@ -207,10 +207,10 @@ C:\billionaire\
 ## 화면 구성 (5탭 + 사이드 라우트)
 
 ### 메인 탭 (StatefulShellRoute)
-1. **대시보드** `/dashboard` — KPI 4장 (지출/수입/순저축/일평균), 카테고리 비율(expense), 태그 TOP, 6개월 추이(지출·수입 그룹 막대)
+1. **대시보드** `/dashboard` — KPI 4장 (지출/수입/순저축/일평균 — *변동비 기준, 고정지출 제외*), 카테고리 비율(expense), 태그 TOP, 6개월 추이(지출·수입 그룹 막대)
 2. **거래내역** `/transactions` — [전체/지출/수입] chip 필터 + 월/카테고리/검색/금액범위/정렬, FAB → [지출][수입] 큰 버튼 + 송금 + 명세서. 합계는 transfer 제외.
 3. **예산** `/budgets` — 카테고리별 변동비 진행률 + 입력 + 저장 (expense만)
-4. **자산** `/accounts` — 상단 총자산 카드(계좌 합 − 카드 부채) + 6개월 자산 추이 라인 차트. 계좌 섹션(잔고 = initial_balance + Σ거래) + 카드 섹션(이번 달 사용액·결제 D-일·연동 계좌). 결제일 지났는데 미정산이면 빨간 줄 → 결제 등록 시트(자동 합계 + 사용자 수정 + 더블 컨펌). 카드 사용 거래는 자산 영향 X, card_payment 거래만 linked_account에서 차감.
+4. **자산** `/accounts` — 상단 총자산 카드(계좌 합 − 카드 부채) + 6개월 자산 추이 라인 차트. 계좌 섹션(잔고 = initial_balance + Σ거래) + 카드 섹션. 카드 row는 *남은 청구액*(cycleAmount−cycleSettled) 큰 숫자 + 메타(매월 N일 결제 · 연동 계좌) + 사이클·D-day 우측 + 미리 결제 있으면 "◯원 결제됨" 보조 라인. 우측 ⋮ → 액션 시트[수정·결제 등록·삭제]. 결제일 지났는데 미정산이면 빨간 줄 → 결제 등록 시트(자동 채움 = 남은 청구액, 결제일 달력 picker, 더블 컨펌). 카드 사용 거래는 자산 영향 X, card_payment 거래만 linked_account에서 차감.
 5. **분석** `/insights` — AI 인사이트 + 4페이지 PageView. spending-insights Edge Function이 expense만 분석.
 
 ### 설정 sub 라우트 (`/settings/...`)
@@ -238,6 +238,7 @@ C:\billionaire\
 - **모든 navigation은 `context.go`로 통일.** GoRouter 14.x의 `context.push`는 ImperativeRouteMatch라 URL bar 갱신 안 되는 케이스가 있음.
 - **뒤로가기는 `goBackOr(context, fallback)` 헬퍼** 사용 — web에선 `window.history.back()`, mobile native에선 `Navigator.canPop` 시도 후 fallback path.
 - **MaterialApp에 `key: ValueKey(brightness)`** — AppColors의 static getter는 InheritedWidget 의존이 없어 Theme 변경 시 자동 rebuild 안 됨. key 교체로 전체 재mount.
+- **탭 재진입 시 상단 스크롤** — `ShellTabSignals.<탭>Tab.addListener` + `ScrollController.animateTo(0)` 패턴. 5탭 전부(대시보드/거래내역/예산/자산/분석) 동일 적용. ListView/ListView.builder에 controller 부여.
 
 ## 디자인 시스템 (다크모드)
 
