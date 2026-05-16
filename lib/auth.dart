@@ -14,6 +14,13 @@ class AuthService {
   /// 강제 이동시킬 때 참고. 새 비번 변경 후 false로 리셋.
   static final ValueNotifier<bool> recoveryMode = ValueNotifier(false);
 
+  /// AI 카드 명세서 import 베타 — 출시 전엔 소수 사용자만. 진입점들이 이 값으로
+  /// 조건부 hide. 라우트 자체는 살아있음 (URL 직접 입력 가능).
+  /// 국외이전·신정법 동의 흐름 정식 도입 전까지 일반 공개 X.
+  static const _aiBetaEmails = {'cldud970@naver.com'};
+  static bool get aiBetaEnabled =>
+      _aiBetaEmails.contains(currentUser?.email);
+
   /// 사용자 정보(이름 등) 변경 시 bump. 화면들이 listening해서 자동 rebuild용.
   static final ValueNotifier<int> userVersion = ValueNotifier(0);
 

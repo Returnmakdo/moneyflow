@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../api/api.dart';
 import '../api/models.dart';
+import '../auth.dart';
 import '../theme.dart';
 import '../utils/csv_download_stub.dart'
     if (dart.library.html) '../utils/csv_download_web.dart';
@@ -352,26 +353,30 @@ class _ImportScreenState extends State<ImportScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           children: [
-            _aiImportCard(),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-              child: Row(
-                children: [
-                  Expanded(child: Divider(color: AppColors.line2, height: 1)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: Text(
-                      '또는 우리 양식 CSV로 직접',
-                      style:
-                          TextStyle(fontSize: 11.5, color: AppColors.text3),
+            if (AuthService.aiBetaEnabled) ...[
+              _aiImportCard(),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                        child: Divider(color: AppColors.line2, height: 1)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        '또는 우리 양식 CSV로 직접',
+                        style:
+                            TextStyle(fontSize: 11.5, color: AppColors.text3),
+                      ),
                     ),
-                  ),
-                  Expanded(child: Divider(color: AppColors.line2, height: 1)),
-                ],
+                    Expanded(
+                        child: Divider(color: AppColors.line2, height: 1)),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 4),
+              const SizedBox(height: 4),
+            ],
             // 어떤 거래를 가져올지 먼저 선택 — 템플릿/안내가 토글 따라 분기.
             _typeToggle(),
             const SizedBox(height: 12),

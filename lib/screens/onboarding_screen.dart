@@ -70,8 +70,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   /// 우상단 "건너뛰기" 누르면 명세서 가져오기 옵션 한 번 더 안내 후 진행.
   /// 도움말에서 진입한 경우엔 묻지 않고 바로 닫기.
+  /// AI 베타 사용자가 아니면 명세서 안내 다이얼로그 자체를 건너뜀.
   Future<void> _onSkip() async {
-    if (widget.fromHelp) {
+    if (widget.fromHelp || !AuthService.aiBetaEnabled) {
       _finish();
       return;
     }

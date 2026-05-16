@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../api/api.dart';
 import '../api/models.dart';
+import '../auth.dart';
 import '../state/selected_month.dart';
 import '../theme.dart';
 import '../widgets/amount_field.dart';
@@ -880,36 +881,36 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
         ));
     fixed.add((_) => const SizedBox(height: 10));
 
-    // 빈 상태
+    // 빈 상태 — AI 명세서 베타는 베타 사용자에만 노출.
+    final showAiCta = _isFirstUser && AuthService.aiBetaEnabled;
     if (rows.isEmpty) {
       fixed.add((_) => Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: EmptyCard(
               icon: hasFilter
                   ? Icons.filter_alt_off_outlined
-                  : (_isFirstUser
+                  : (showAiCta
                       ? Icons.auto_awesome
                       : Icons.receipt_long_outlined),
               title: hasFilter
                   ? '조건에 맞는 거래가 없어요'
-                  : (_isFirstUser
+                  : (showAiCta
                       ? '카드 이용내역으로 한 번에 시작해보세요'
                       : '이번 달에 등록된 거래가 없어요'),
               body: hasFilter
                   ? null
-                  : (_isFirstUser
+                  : (showAiCta
                       ? 'AI가 카드 명세서를 정리해서 거래·카테고리까지 자동으로 등록해드려요.'
                       : '오른쪽 아래 + 추가 버튼으로 거래를 등록할 수 있어요.'),
-              actionLabel: (!hasFilter && _isFirstUser)
-                  ? '명세서로 한 번에 가져오기'
-                  : null,
-              onAction: (!hasFilter && _isFirstUser)
+              actionLabel:
+                  (!hasFilter && showAiCta) ? '명세서로 한 번에 가져오기' : null,
+              onAction: (!hasFilter && showAiCta)
                   ? () => context.go('/settings/import/ai')
                   : null,
               secondaryActionLabel:
-                  (!hasFilter && _isFirstUser) ? '직접 입력' : null,
+                  (!hasFilter && showAiCta) ? '직접 입력' : null,
               onSecondaryAction:
-                  (!hasFilter && _isFirstUser) ? _openModal : null,
+                  (!hasFilter && showAiCta) ? _openModal : null,
             ),
           ));
       return ListView.builder(
@@ -1744,20 +1745,22 @@ class _AddSheet extends StatelessWidget {
               subtitle: '계좌 사이 이체 — 자산에서 빠지지 않아요',
               value: 'transfer',
             ),
-            Divider(
-              height: 1,
-              color: AppColors.line2,
-              indent: 20,
-              endIndent: 20,
-            ),
-            _option(
-              context,
-              icon: Icons.auto_awesome,
-              title: '명세서로 한 번에 가져오기',
-              subtitle: 'AI가 카드 이용내역을 자동으로 정리',
-              value: 'import',
-              accent: true,
-            ),
+            if (AuthService.aiBetaEnabled) ...[
+              Divider(
+                height: 1,
+                color: AppColors.line2,
+                indent: 20,
+                endIndent: 20,
+              ),
+              _option(
+                context,
+                icon: Icons.auto_awesome,
+                title: '명세서로 한 번에 가져오기',
+                subtitle: 'AI가 카드 이용내역을 자동으로 정리',
+                value: 'import',
+                accent: true,
+              ),
+            ],
           ],
         ),
       ),

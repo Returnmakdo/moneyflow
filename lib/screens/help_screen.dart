@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../auth.dart';
 import '../theme.dart';
 import '../utils/nav_back.dart';
 import '../widgets/common.dart';
@@ -240,15 +241,16 @@ class HelpScreen extends StatelessWidget {
                 '지난 결제일에 다 갚은 상태라면 "미정산 = 이번 사용기간 합계 + 그 이후 새로 쓴 금액" 이 돼요',
               ],
             ),
-            const _GuideCard(
-              icon: Icons.help_outline,
-              title: 'AI 분석은 얼마나 자주 새로 만들어져요?',
-              points: [
-                '한 번 분석하면 결과를 저장해뒀다가 다시 들어와도 바로 보여드려요',
-                '그 달의 거래를 추가하거나 고치거나 지우면 저장된 결과가 자동으로 비워져요',
-                '비워진 뒤엔 "이번 달 분석하기"나 "다시 분석"을 눌러서 새로 받아볼 수 있어요',
-              ],
-            ),
+            if (AuthService.aiBetaEnabled)
+              const _GuideCard(
+                icon: Icons.help_outline,
+                title: 'AI 분석은 얼마나 자주 새로 만들어져요?',
+                points: [
+                  '한 번 분석하면 결과를 저장해뒀다가 다시 들어와도 바로 보여드려요',
+                  '그 달의 거래를 추가하거나 고치거나 지우면 저장된 결과가 자동으로 비워져요',
+                  '비워진 뒤엔 "이번 달 분석하기"나 "다시 분석"을 눌러서 새로 받아볼 수 있어요',
+                ],
+              ),
           ],
         ),
       ),

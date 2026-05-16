@@ -91,17 +91,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _reload() async {
     try {
       final api = Api.instance;
+      // 지난달 ym 계산 (지출 속도 비교용).
+      final parts = _month.split('-').map(int.parse).toList();
+      final prevDt = DateTime(parts[0], parts[1] - 1, 1);
+      final prevYm =
+          '${prevDt.year}-${prevDt.month.toString().padLeft(2, '0')}';
       final results = await Future.wait([
         api.getDashboard(_month),
-        api.getSubCategoryStats(month: _month, limit: 10, fixed: false),
         api.hasAnyTransactions(),
+        api.listTransactions(month: _month, type: 'expense'),
+        api.listTransactions(month: prevYm, type: 'expense'),
       ]);
       if (!mounted) return;
       setState(() {
         _data = _DashData(
           data: results[0] as Dashboard,
-          subs: results[1] as List<SubCategoryStat>,
-          isFirstUser: !(results[2] as bool),
+          isFirstUser: !(results[1] as bool),
+          currentTxs: results[2] as List<Tx>,
+          prevTxs: results[3] as List<Tx>,
         );
         _error = null;
       });
@@ -176,7 +183,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 18),
               _section(
-                title: '카테고리 비율',
+                title: '카테고리별 지출',
                 child: AppCard(
                   child: CategoryShare(
                     categories: d.data.categories,
@@ -185,9 +192,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ),
               _section(
-                title: '태그 TOP 10',
-                meta: '변동비만 · 이번 달 합계 기준',
-                child: _subList(d.subs),
+                title: '지출 속도',
+                child: d.currentTxs.isEmpty && d.prevTxs.isEmpty
+                    ? _subList(const []) // 빈 상태 (첫 사용자 CTA 그대로)
+                    : AppCard(
+                        // 차트가 좌우 풀폭 가깝게 — Y축 라벨/차트 line 영역 확보.
+                        padding:
+                            const EdgeInsets.fromLTRB(10, 18, 14, 18),
+                        child: SpendingPaceChart(
+                          currentTxs: d.currentTxs,
+                          prevTxs: d.prevTxs,
+                          month: _month,
+                        ),
+                      ),
               ),
               _section(
                 title: '최근 6개월',
@@ -396,7 +413,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _subList(List<SubCategoryStat> rows) {
     if (rows.isEmpty) {
-      final firstUser = _data?.isFirstUser ?? false;
+      // AI 명세서 import는 베타 — 일반 사용자엔 빈 상태 CTA를 *직접 입력*으로.
+      final firstUser =
+          (_data?.isFirstUser ?? false) && AuthService.aiBetaEnabled;
       return EmptyCard(
         icon: firstUser ? Icons.auto_awesome : Icons.receipt_long_outlined,
         title: firstUser
@@ -466,11 +485,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
 class _DashData {
   final Dashboard data;
-  final List<SubCategoryStat> subs;
   final bool isFirstUser;
+  // 지출 속도 차트용 — 이번 달/지난달 expense 거래 list.
+  final List<Tx> currentTxs;
+  final List<Tx> prevTxs;
   const _DashData({
     required this.data,
-    required this.subs,
     required this.isFirstUser,
+    required this.currentTxs,
+    required this.prevTxs,
   });
 }
