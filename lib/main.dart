@@ -264,7 +264,7 @@ class _BudgetAppState extends State<BudgetApp> {
           // 트리거가 안 됨 — key 교체로 강제 rebuild 보장. routerConfig는
           // 외부 변수에 보관되어 있어 재mount해도 라우트 state는 보존됨.
           key: ValueKey(brightness),
-          title: '가계부',
+          title: '씀씀 가계부',
           debugShowCheckedModeBanner: false,
           theme: buildLightTheme(),
           darkTheme: buildDarkTheme(),

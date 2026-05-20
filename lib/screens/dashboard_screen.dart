@@ -336,9 +336,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ? (d.incomeTotal == 0 ? '아직 수입 없음' : '전달 데이터 없음')
         : '전달 대비 ${incDelta >= 0 ? '+' : ''}${smartWon(incDelta)}원';
 
-    // 순 저축 = 수입 - 지출
+    // 순 이익 = 수입 - 지출
     final net = d.netSaving;
-    final netLabel = net >= 0 ? '순 저축' : '적자';
+    final netLabel = net >= 0 ? '순 이익' : '적자';
     final netAccent = d.incomeTotal == 0 && d.thisMonthTotal == 0
         ? KpiAccent.neutral
         : (net >= 0 ? KpiAccent.good : KpiAccent.bad);

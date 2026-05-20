@@ -1821,11 +1821,6 @@ class Api {
         return DateTime(y, m, c.paymentDay.clamp(1, maxDay));
       }
       final thisMonthPay = payDateOf(today.year, today.month);
-      final paymentDate = today.day <= thisMonthPay.day
-          ? thisMonthPay
-          : payDateOf(today.year, today.month + 1);
-      final daysUntil =
-          paymentDate.difference(DateTime(today.year, today.month, today.day)).inDays;
       // needsSettlement: 결제일이 *지났는데* 이번 달 결제 거래 미등록.
       final ymThisPay =
           '${thisMonthPay.year}-${thisMonthPay.month.toString().padLeft(2, '0')}';
@@ -1836,12 +1831,22 @@ class Api {
       // 결제일이 month 끝을 넘으면 clamp된 값으로 비교 (예: 31 paymentDay + 2월).
       final needs =
           today.day > thisMonthPay.day && !settledThisMonth && debt > 0;
+      // 결제일 당일(예: 5/20)에 결제 등록을 마쳤다면 사이클이 끝났으므로
+      // 다음 결제 사이클로 넘김. 결제일 지났는데 미정산이면 paymentDate는
+      // 다음 달로 옮겨도 useThisMonthCycle은 needs로 다시 false에서 true.
+      final passedThisCycle = today.day > thisMonthPay.day ||
+          (today.day == thisMonthPay.day && settledThisMonth);
+      final paymentDate = passedThisCycle
+          ? payDateOf(today.year, today.month + 1)
+          : thisMonthPay;
+      final daysUntil =
+          paymentDate.difference(DateTime(today.year, today.month, today.day)).inDays;
       // 사용기간 (statement_close_day 있을 때만):
       // - 결제일 > 마감일(일반 카드): 다음 결제일 청구 사이클은 (전월 close+1 ~ 이번달 close)
       // - 결제일 ≤ 마감일 (결제 9·마감 20 같은 카드): 마감 후 다음 달 9일이 아니라
       //   *그 다음 달* 9일 결제. 사이클이 한 달 앞당겨짐 — paymentLate 보정.
       // useThisMonthCycle은 사이클 계산 + 정산 기간 계산 둘 다에 쓰여서 밖에 둠.
-      final useThisMonthCycle = today.day <= thisMonthPay.day || needs;
+      final useThisMonthCycle = !passedThisCycle || needs;
       String? cycleStartStr;
       String? cycleEndStr;
       if (c.statementCloseDay != null) {

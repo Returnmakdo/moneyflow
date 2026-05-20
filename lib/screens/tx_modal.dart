@@ -355,7 +355,15 @@ class _TxModalState extends State<_TxModal> {
         dayOfMonth: day,
         active: true,
         memo: tx.memo,
+        accountId: tx.accountId,
+        cardId: tx.cardId,
       );
+      // 원본 거래를 정기 거래로 마킹. 안 하면 _applyDueFixedImpl의 dedupe
+      // (is_fixed=1만 기준)에 잡히지 않아 같은 (merchant, major) 페어로
+      // 자동 적용이 한 번 더 돌아 거래가 2개 생김.
+      if (!tx.isFixed) {
+        await Api.instance.updateTransaction(tx.id, isFixed: true);
+      }
       if (!mounted) return;
       showToast(context, '정기지출로 등록했어요');
       Navigator.of(context).pop(TxModalResult.changed);

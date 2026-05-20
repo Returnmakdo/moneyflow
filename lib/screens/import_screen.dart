@@ -57,8 +57,8 @@ class _ImportScreenState extends State<ImportScreen> {
   Future<void> _downloadTemplate() async {
     final template = _isIncome ? _incomeTemplate : _expenseTemplate;
     final fileName = _isIncome
-        ? '가계부_수입_템플릿.csv'
-        : '가계부_지출_템플릿.csv';
+        ? '씀씀_수입_템플릿.csv'
+        : '씀씀_지출_템플릿.csv';
     final shared = await triggerCsvDownload(template, fileName);
     if (!mounted) return;
     if (!shared) showToast(context, '템플릿을 다운로드했어요');

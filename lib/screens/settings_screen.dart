@@ -47,7 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final stamp =
           '${ts.year}${ts.month.toString().padLeft(2, '0')}${ts.day.toString().padLeft(2, '0')}';
       final shared =
-          await triggerCsvDownload(csv, '가계부_$stamp.csv');
+          await triggerCsvDownload(csv, '씀씀_$stamp.csv');
       if (!mounted) return;
       if (!shared) showToast(context, 'CSV 파일을 다운로드했어요');
     } catch (e) {

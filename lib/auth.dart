@@ -155,14 +155,19 @@ class AuthService {
     return '사용자';
   }
 
-  /// OAuth 로그인. 웹에선 현재 origin으로 리다이렉트, 모바일은 Site URL 사용.
-  /// 신규 사용자면 자동 가입(트리거가 '기타' 카테고리 시드).
+  /// OAuth 로그인. 웹은 현재 origin, 모바일(Android/iOS)은 deep link scheme로
+  /// 콜백 받음. native scheme는 AndroidManifest intent-filter + iOS
+  /// CFBundleURLTypes에 등록되어 있어야 OS가 앱으로 라우팅.
+  /// Supabase 대시보드 Authentication → URL Configuration → Redirect URLs에도
+  /// 이 scheme 등록 필요 (없으면 Site URL로 fallback).
   static Future<void> signInWithProvider(OAuthProvider provider) async {
     // 끝에 '/' 강제 — Supabase Redirect URLs 화이트리스트가 'http://host/**' 형식이라
     // path 없는 origin('http://host')은 매치 안 되어 Site URL(production)로 fallback됨.
     await sb.auth.signInWithOAuth(
       provider,
-      redirectTo: kIsWeb ? '${Uri.base.origin}/' : null,
+      redirectTo: kIsWeb
+          ? '${Uri.base.origin}/'
+          : 'com.cyahn.billionaire://login-callback/',
     );
   }
 
@@ -214,7 +219,9 @@ class AuthService {
   static Future<void> sendPasswordReset(String email) async {
     await sb.auth.resetPasswordForEmail(
       email.trim(),
-      redirectTo: kIsWeb ? Uri.base.origin : null,
+      redirectTo: kIsWeb
+          ? Uri.base.origin
+          : 'com.cyahn.billionaire://login-callback/',
     );
   }
 }

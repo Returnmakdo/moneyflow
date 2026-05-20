@@ -863,8 +863,14 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
     final rows = _applyExtraFilters(_txs!);
     final hasFilter = _hasFilter;
-    final total = rows
-        .where((r) => r.type == 'expense' || r.type == 'income')
+    // type='all'에서는 expense+income 단순 합산이 회계적으로 무의미해서
+    // 지출/수입을 분리 표시. type 필터가 하나로 한정된 경우엔 단일 합계.
+    final showSplit = _type.isEmpty;
+    final expenseTotal = rows
+        .where((r) => r.type == 'expense')
+        .fold<int>(0, (s, r) => s + r.amount);
+    final incomeTotal = rows
+        .where((r) => r.type == 'income')
         .fold<int>(0, (s, r) => s + r.amount);
 
     // Summary
@@ -873,8 +879,10 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
           child: _Summary(
             label: hasFilter
                 ? '필터된 합계 · ${ymLabel(_month)}'
-                : '${ymLabel(_month)} ${_type == 'income' ? '수입' : (_type == 'expense' ? '지출' : '거래')} 합계',
-            total: total,
+                : '${ymLabel(_month)} ${_type == 'income' ? '수입' : (_type == 'expense' ? '지출' : '거래')}',
+            total: showSplit ? null : (expenseTotal + incomeTotal),
+            expenseTotal: showSplit ? expenseTotal : null,
+            incomeTotal: showSplit ? incomeTotal : null,
             count: rows.length,
             filtered: hasFilter,
           ),
@@ -969,49 +977,38 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 class _Summary extends StatelessWidget {
   const _Summary({
     required this.label,
-    required this.total,
     required this.count,
     required this.filtered,
+    this.total,
+    this.expenseTotal,
+    this.incomeTotal,
   });
   final String label;
-  final int total;
+  // 단일 모드: total 표시, 분리 모드: expense/income 두 줄 표시.
+  final int? total;
+  final int? expenseTotal;
+  final int? incomeTotal;
   final int count;
   final bool filtered;
 
   @override
   Widget build(BuildContext context) {
+    final isSplit = expenseTotal != null && incomeTotal != null;
     return AppCard(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: filtered ? AppColors.primary : AppColors.text3,
-              )),
-          const SizedBox(height: 6),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
             children: [
-              Text(won(total),
-                  style: TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.text,
-                    letterSpacing: -0.02,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  )),
-              const SizedBox(width: 4),
-              Text('원',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppColors.text3,
-                    fontWeight: FontWeight.w600,
-                  )),
-              const Spacer(),
+              Expanded(
+                child: Text(label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: filtered ? AppColors.primary : AppColors.text3,
+                    )),
+              ),
               Text('$count건',
                   style: TextStyle(
                     fontSize: 12.5,
@@ -1019,8 +1016,86 @@ class _Summary extends StatelessWidget {
                   )),
             ],
           ),
+          const SizedBox(height: 8),
+          if (isSplit) ...[
+            _SplitRow(
+              label: '지출',
+              amount: expenseTotal!,
+              color: AppColors.danger,
+            ),
+            const SizedBox(height: 4),
+            _SplitRow(
+              label: '수입',
+              amount: incomeTotal!,
+              color: AppColors.success,
+            ),
+          ] else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(won(total ?? 0),
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.text,
+                      letterSpacing: -0.02,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    )),
+                const SizedBox(width: 4),
+                Text('원',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: AppColors.text3,
+                      fontWeight: FontWeight.w600,
+                    )),
+              ],
+            ),
         ],
       ),
+    );
+  }
+}
+
+class _SplitRow extends StatelessWidget {
+  const _SplitRow({
+    required this.label,
+    required this.amount,
+    required this.color,
+  });
+  final String label;
+  final int amount;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Text(label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: color,
+            )),
+        const Spacer(),
+        Text(won(amount),
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: AppColors.text,
+              letterSpacing: -0.02,
+              fontFeatures: [FontFeature.tabularFigures()],
+            )),
+        const SizedBox(width: 3),
+        Text('원',
+            style: TextStyle(
+              fontSize: 12.5,
+              color: AppColors.text3,
+              fontWeight: FontWeight.w600,
+            )),
+      ],
     );
   }
 }
