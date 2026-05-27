@@ -168,6 +168,9 @@ class AuthService {
       redirectTo: kIsWeb
           ? '${Uri.base.origin}/'
           : 'com.cyahn.billionaire://login-callback/',
+      authScreenLaunchMode: kIsWeb
+          ? LaunchMode.platformDefault
+          : LaunchMode.externalApplication,
     );
   }
 
