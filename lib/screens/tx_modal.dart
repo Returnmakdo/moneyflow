@@ -287,13 +287,67 @@ class _TxModalState extends State<_TxModal> {
           );
         }
       }
+      // 변동비 expense 신규 거래에 한해 그 카테고리 예산 임계(80%/100%) 통과 시
+      // 토스트. 수정·삭제는 차감 계산 복잡 + 빈도 낮아 신규만 처리.
+      String? thresholdMsg;
+      bool thresholdDanger = false;
+      if (!_isTransfer &&
+          _type == 'expense' &&
+          !_isFixed &&
+          !_editing &&
+          _major.isNotEmpty) {
+        final t = await _evaluateBudgetThreshold(_major, amount);
+        thresholdMsg = t?.message;
+        thresholdDanger = t?.over ?? false;
+      }
       if (!mounted) return;
-      showToast(context, _editing ? '수정했어요' : '추가했어요');
+      showToast(
+        context,
+        thresholdMsg ?? (_editing ? '수정했어요' : '추가했어요'),
+        error: thresholdDanger,
+      );
       Navigator.of(context).pop(TxModalResult.changed);
     } catch (e) {
       if (!mounted) return;
       showToast(context, errorMessage(e), error: true);
       setState(() => _saving = false);
+    }
+  }
+
+  /// 변동비 expense 신규 추가 시 그 카테고리 예산 임계 통과 평가.
+  /// 거래 후 변동비/예산 = afterPct, 거래 전 = afterPct - amount/budget.
+  /// 두 시점 사이에 80% 또는 100% 선을 *처음 넘은* 경우에만 메시지.
+  Future<_BudgetThreshold?> _evaluateBudgetThreshold(
+      String major, int amount) async {
+    try {
+      final ym = _date.text.length >= 7 ? _date.text.substring(0, 7) : null;
+      if (ym == null) return null;
+      final dash = await Api.instance.getDashboard(ym);
+      final cat = dash.categories.firstWhere(
+        (c) => c.major == major,
+        orElse: () => const CategoryStats(
+          major: '',
+          spent: 0,
+          fixedSpent: 0,
+          variableSpent: 0,
+          count: 0,
+          budget: 0,
+        ),
+      );
+      if (cat.major.isEmpty || cat.budget <= 0) return null;
+      final after = cat.variableSpent;
+      final before = after - amount;
+      final beforePct = before / cat.budget;
+      final afterPct = after / cat.budget;
+      if (beforePct < 1.0 && afterPct >= 1.0) {
+        return _BudgetThreshold('$major 예산을 넘었어요', over: true);
+      }
+      if (beforePct < 0.8 && afterPct >= 0.8) {
+        return _BudgetThreshold('$major 예산의 80%를 썼어요');
+      }
+      return null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -924,6 +978,12 @@ class _TxModalState extends State<_TxModal> {
       ],
     );
   }
+}
+
+class _BudgetThreshold {
+  final String message;
+  final bool over;
+  const _BudgetThreshold(this.message, {this.over = false});
 }
 
 class _PickChip extends StatelessWidget {

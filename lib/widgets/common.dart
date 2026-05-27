@@ -542,15 +542,48 @@ class EmptyCard extends StatelessWidget {
   }
 }
 
-/// 토스트 (스낵바).
+/// 토스트 (스낵바) — floating 캡슐, 좌측 상태 아이콘, 다크/라이트 자동 대응.
+/// bg = AppColors.text(라이트=흑·다크=백), fg = AppColors.bg 반대색.
+/// error=true면 danger 빨강 + 흰 글씨로 강조.
 void showToast(BuildContext context, String message,
     {bool error = false}) {
+  final bg = error ? AppColors.danger : AppColors.text;
+  final fg = error ? Colors.white : AppColors.bg;
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: error ? AppColors.danger : AppColors.text,
-      duration: const Duration(seconds: 2),
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: bg,
+      elevation: 6,
+      duration: const Duration(milliseconds: 1900),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+      ),
+      content: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            error
+                ? Icons.error_outline_rounded
+                : Icons.check_circle_rounded,
+            size: 18,
+            color: fg,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: fg,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
     ));
 }
 

@@ -85,10 +85,21 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
         for (final c in dash.categories) c.major: c.variableSpent,
       };
 
+      // 예산 큰 순으로 표시 — 동률(예: 0원)은 원래 카테고리 순서(sort_order asc)
+      // 유지. Dart의 List.sort는 stable 보장 X 이므로 인덱스 tiebreak로 명시.
+      final origIndex = {
+        for (var i = 0; i < budgets.length; i++) budgets[i].major: i,
+      };
+      final sortedBudgets = [...budgets]..sort((a, b) {
+        final byAmount = b.monthlyAmount.compareTo(a.monthlyAmount);
+        if (byAmount != 0) return byAmount;
+        return origIndex[a.major]!.compareTo(origIndex[b.major]!);
+      });
+
       // 컨트롤러 동기화: 새 카테고리는 추가, 사라진 건 정리, 사용자가 안 건드린
       // 입력만 서버 값으로 갱신.
       final keep = <String>{};
-      for (final b in budgets) {
+      for (final b in sortedBudgets) {
         keep.add(b.major);
         final ctrl = _ctrls.putIfAbsent(b.major, () => TextEditingController());
         final last = _lastLoaded[b.major];
@@ -107,7 +118,7 @@ class _BudgetsScreenState extends State<BudgetsScreen> {
       }
       if (!mounted) return;
       setState(() {
-        _data = _BudgetsData(budgets: budgets, variable: variable);
+        _data = _BudgetsData(budgets: sortedBudgets, variable: variable);
         _error = null;
       });
     } catch (e) {

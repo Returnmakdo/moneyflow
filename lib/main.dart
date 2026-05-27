@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show FontLoader, rootBundle;
@@ -6,7 +8,9 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show AuthChangeEvent;
 
+import 'api/api.dart';
 import 'auth.dart';
+import 'services/notifications.dart';
 import 'screens/account_settings_screen.dart';
 import 'screens/accounts_screen.dart';
 import 'screens/budgets_screen.dart';
@@ -47,6 +51,8 @@ Future<void> main() async {
   // 로그인된 상태면 initListeners가 서버값으로 다시 동기화.
   await AuthService.bootstrapTheme();
   AuthService.initListeners();
+  // 로컬 알림 플러그인 초기화 (timezone 등). 권한 요청과 스케줄링은 로그인 후.
+  await NotificationsService.instance.init();
   runApp(const BudgetApp());
 }
 
@@ -72,11 +78,65 @@ class BudgetApp extends StatefulWidget {
 
 class _BudgetAppState extends State<BudgetApp> {
   late final GoRouter _router;
+  StreamSubscription<dynamic>? _authSub;
+  bool _refreshScheduled = false;
 
   @override
   void initState() {
     super.initState();
     _router = _buildRouter();
+    // 카드/거래 변경 시 결제일 알림 재스케줄 (debounce). 잔액 0이 되면 자동 cancel.
+    Api.instance.cardsVersion.addListener(_scheduleCardRefresh);
+    Api.instance.txVersion.addListener(_scheduleCardRefresh);
+    // 콜드 부트 시 이미 로그인된 상태면 즉시 권한 요청 + 첫 스케줄.
+    if (AuthService.currentUser != null) {
+      _setupNotificationsForUser();
+    }
+    // 이후 로그인/로그아웃 이벤트도 listen — 로그인 시 권한 요청·스케줄, 로그아웃 시 cancel.
+    _authSub = AuthService.onAuthStateChange.listen((data) {
+      final ev = data.event;
+      if (ev == AuthChangeEvent.signedIn ||
+          ev == AuthChangeEvent.initialSession ||
+          ev == AuthChangeEvent.tokenRefreshed) {
+        if (AuthService.currentUser != null) _setupNotificationsForUser();
+      } else if (ev == AuthChangeEvent.signedOut) {
+        NotificationsService.instance.cancelAll();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    Api.instance.cardsVersion.removeListener(_scheduleCardRefresh);
+    Api.instance.txVersion.removeListener(_scheduleCardRefresh);
+    _authSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _setupNotificationsForUser() async {
+    // 권한 거부해도 OS는 스케줄 받아두므로 추후 권한 켜지면 알림 발화.
+    await NotificationsService.instance.requestPermissions();
+    await _refreshCardSchedules();
+  }
+
+  void _scheduleCardRefresh() {
+    if (_refreshScheduled) return;
+    _refreshScheduled = true;
+    scheduleMicrotask(() async {
+      _refreshScheduled = false;
+      await _refreshCardSchedules();
+    });
+  }
+
+  Future<void> _refreshCardSchedules() async {
+    if (AuthService.currentUser == null) return;
+    try {
+      // trendMonths=0 — 알림은 카드 요약만 필요, 6개월 자산 추이 계산 불필요.
+      final snap = await Api.instance.getAssetSnapshot(trendMonths: 0);
+      await NotificationsService.instance.rescheduleCardPayments(snap.cards);
+    } catch (_) {
+      // 네트워크 실패 등은 무시 — 다음 변경 시 자동 재시도.
+    }
   }
 
   GoRouter _buildRouter() {
