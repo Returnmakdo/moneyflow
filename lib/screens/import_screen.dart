@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:go_router/go_router.dart';
 
 import '../api/api.dart';
@@ -50,23 +49,16 @@ class _ImportScreenState extends State<ImportScreen> {
       '2026-05-25,3500000,월급,회사,신한 입출금,정기,5월분\n'
       '2026-05-10,50000,용돈,부모님,현금,,\n';
 
-  static const _webUrl = 'https://billionaire-chi.vercel.app/settings/import';
-
   bool get _isIncome => _type == 'income';
 
   Future<void> _downloadTemplate() async {
     final template = _isIncome ? _incomeTemplate : _expenseTemplate;
     final fileName = _isIncome
-        ? '씀씀_수입_템플릿.csv'
-        : '씀씀_지출_템플릿.csv';
+        ? '머니플로우_수입_템플릿.csv'
+        : '머니플로우_지출_템플릿.csv';
     final shared = await triggerCsvDownload(template, fileName);
     if (!mounted) return;
     if (!shared) showToast(context, '템플릿을 다운로드했어요');
-  }
-
-  Future<void> _copyWebUrl() async {
-    await Clipboard.setData(const ClipboardData(text: _webUrl));
-    if (mounted) showToast(context, 'URL을 복사했어요');
   }
 
   Future<void> _pickFile() async {
@@ -402,10 +394,6 @@ class _ImportScreenState extends State<ImportScreen> {
                 ),
               ),
             ),
-            if (isMobileEnv()) ...[
-              const SizedBox(height: 8),
-              _webUrlCard(),
-            ],
             const SizedBox(height: 12),
             _stepCard(
               step: '2',
@@ -786,65 +774,6 @@ class _ImportScreenState extends State<ImportScreen> {
               fontWeight: FontWeight.w600,
               color: AppColors.text,
               fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _webUrlCard() {
-    return Container(
-      padding: EdgeInsets.fromLTRB(14, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: AppColors.primaryWeak,
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.lightbulb_outline,
-                  size: 16, color: AppColors.primaryStrong),
-              SizedBox(width: 6),
-              Text(
-                'PC 웹에서 작업하기를 추천해요',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primaryStrong,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '모바일에서도 가능하지만, 엑셀로 거래 정리하는 건 PC에서 훨씬 편해요. 아래 URL을 복사해서 PC 브라우저에 붙여넣으세요.',
-            style: TextStyle(
-              fontSize: 12,
-              color: AppColors.text2,
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: _copyWebUrl,
-              icon: const Icon(Icons.content_copy, size: 14),
-              label: const Text('URL 복사'),
-              style: TextButton.styleFrom(
-                foregroundColor: AppColors.primaryStrong,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                textStyle: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
             ),
           ),
         ],

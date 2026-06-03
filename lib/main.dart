@@ -22,6 +22,7 @@ import 'screens/changelog_screen.dart';
 import 'screens/help_screen.dart';
 import 'screens/import_screen.dart';
 import 'screens/theme_settings_screen.dart';
+import 'screens/transaction_templates_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'screens/reset_password_screen.dart';
@@ -203,6 +204,13 @@ class _BudgetAppState extends State<BudgetApp> {
               ),
             ),
             GoRoute(
+              path: 'templates',
+              builder: (_, _) => const BackPopScope(
+                fallback: '/settings',
+                child: TransactionTemplatesScreen(),
+              ),
+            ),
+            GoRoute(
               path: 'help',
               builder: (_, _) => const BackPopScope(
                 fallback: '/settings',
@@ -324,7 +332,7 @@ class _BudgetAppState extends State<BudgetApp> {
           // 트리거가 안 됨 — key 교체로 강제 rebuild 보장. routerConfig는
           // 외부 변수에 보관되어 있어 재mount해도 라우트 state는 보존됨.
           key: ValueKey(brightness),
-          title: '씀씀 가계부',
+          title: '머니플로우',
           debugShowCheckedModeBanner: false,
           theme: buildLightTheme(),
           darkTheme: buildDarkTheme(),

@@ -7,6 +7,7 @@ import '../widgets/amount_field.dart';
 import '../widgets/common.dart';
 import '../widgets/format.dart';
 import '../widgets/ko_date_picker.dart';
+import 'transaction_templates_screen.dart' show showTemplateEditor;
 
 enum TxModalResult { changed, none }
 
@@ -373,6 +374,119 @@ class _TxModalState extends State<_TxModal> {
     }
   }
 
+  /// 현 거래(편집 모드)를 템플릿으로 저장. 이름 입력 다이얼로그 → createTemplate.
+  /// 가맹점이 비어있으면 기본 이름 안내. 같은 이름 중복 시 에러 토스트.
+  Future<void> _saveAsTemplate() async {
+    final tx = widget.tx;
+    if (tx == null) return;
+    final defaultName = (tx.merchant?.trim().isNotEmpty == true
+            ? tx.merchant!.trim()
+            : (_major.isNotEmpty ? _major : '새 템플릿'));
+    final name = await _promptText(
+      title: '템플릿으로 저장',
+      hint: defaultName,
+      confirmText: '저장',
+    );
+    final finalName = (name?.isNotEmpty == true) ? name! : defaultName;
+    try {
+      await Api.instance.createTemplate(
+        name: finalName,
+        type: tx.type,
+        amount: tx.amount,
+        major: tx.majorCategory,
+        sub: tx.subCategory,
+        merchant: tx.merchant,
+        memo: tx.memo,
+        accountId: tx.accountId,
+        cardId: tx.cardId,
+      );
+      if (!mounted) return;
+      showToast(context, '"$finalName" 템플릿으로 저장했어요');
+    } catch (e) {
+      if (!mounted) return;
+      showToast(context, errorMessage(e), error: true);
+    }
+  }
+
+  /// 현 모달 type(expense/income)에 맞는 템플릿 목록을 시트로 띄움.
+  /// 결과: TransactionTemplate → 폼 prefill, addNewSentinel → 새 템플릿 추가 흐름.
+  Future<void> _pickTemplate() async {
+    List<TransactionTemplate> templates;
+    try {
+      templates = await Api.instance.listTemplates(type: _type);
+    } catch (e) {
+      if (mounted) showToast(context, errorMessage(e), error: true);
+      return;
+    }
+    if (!mounted) return;
+    final picked = await showModalBottomSheet<Object>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _TemplatePickerSheet(
+        templates: templates,
+        type: _type,
+      ),
+    );
+    if (!mounted) return;
+    if (picked is TransactionTemplate) {
+      _applyTemplate(picked);
+      showToast(context, '"${picked.name}" 템플릿을 불러왔어요');
+    } else if (picked == _TemplatePickerSheet.addNewSentinel) {
+      // 새 템플릿 에디터 → 저장하면 자동으로 폼에 적용.
+      final created =
+          await showTemplateEditor(context, initialType: _type);
+      if (!mounted || created == null) return;
+      _applyTemplate(created);
+      showToast(context, '"${created.name}" 템플릿을 불러왔어요');
+    }
+  }
+
+  /// 템플릿 내용을 폼에 반영. type은 모달과 동일 가정 (필터로 보장).
+  void _applyTemplate(TransactionTemplate tpl) {
+    setState(() {
+      if (tpl.amount > 0) AmountField.setNumber(_amount, tpl.amount);
+      if (tpl.major != null && tpl.major!.isNotEmpty) {
+        final majors = _typedMajors();
+        if (majors.contains(tpl.major)) {
+          _major = tpl.major!;
+          // sub은 major 일치할 때만 적용.
+          final subs = _cats.byMajor[_major] ?? const [];
+          if (tpl.sub != null &&
+              tpl.sub!.isNotEmpty &&
+              subs.any((s) => s.sub == tpl.sub)) {
+            _sub = tpl.sub;
+          } else {
+            _sub = null;
+          }
+        }
+      }
+      if (tpl.merchant != null && tpl.merchant!.isNotEmpty) {
+        _merchant.text = tpl.merchant!;
+      }
+      if (tpl.memo != null && tpl.memo!.isNotEmpty) {
+        _memo.text = tpl.memo!;
+      }
+      // 결제수단.
+      if (_isIncome) {
+        if (tpl.accountId != null &&
+            _accounts.any((a) => a.id == tpl.accountId)) {
+          _incomeAccountId = tpl.accountId;
+        }
+      } else {
+        // expense — card_id 우선. 둘 다 null이면 폼 기본값 유지.
+        if (tpl.cardId != null && _cards.any((c) => c.id == tpl.cardId)) {
+          _expensePaymentKind = 'card';
+          _selectedCardId = tpl.cardId;
+        } else if (tpl.accountId != null &&
+            _accounts.any((a) => a.id == tpl.accountId)) {
+          _expensePaymentKind = 'account';
+          _expenseAccountId = tpl.accountId;
+        }
+      }
+    });
+  }
+
   Future<void> _registerAsFixed() async {
     final tx = widget.tx;
     if (tx == null) return;
@@ -464,6 +578,23 @@ class _TxModalState extends State<_TxModal> {
                     ),
                   ),
                   const Spacer(),
+                  // 템플릿 불러오기 — 신규 등록 + 지출/수입 모드에서만.
+                  // 이체는 템플릿 의미 없음, 편집 모드에선 폼이 이미 채워져 있어 불필요.
+                  if (!_editing && !_isTransfer)
+                    TextButton.icon(
+                      onPressed: _pickTemplate,
+                      icon: const Icon(Icons.bookmark_border, size: 16),
+                      label: const Text('템플릿',
+                          style: TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w600)),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: Icon(Icons.close, color: AppColors.text3),
@@ -603,6 +734,22 @@ class _TxModalState extends State<_TxModal> {
                       const SizedBox(height: 8),
                       Divider(color: AppColors.line2, height: 1),
                       const SizedBox(height: 8),
+                      // 템플릿 저장은 지출·수입 거래에만 (이체 X).
+                      if (!_isTransfer)
+                        TextButton.icon(
+                          onPressed: _saveAsTemplate,
+                          icon:
+                              const Icon(Icons.bookmark_add_outlined, size: 18),
+                          label: const Text('템플릿으로 저장',
+                              style:
+                                  TextStyle(fontWeight: FontWeight.w600)),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12),
+                            alignment: Alignment.centerLeft,
+                          ),
+                        ),
                       // 정기지출 등록은 지출 거래에만 (이체·수입 X).
                       if (!_isIncome && !_isTransfer)
                         TextButton.icon(
@@ -919,7 +1066,9 @@ class _TxModalState extends State<_TxModal> {
         ],
       ),
     );
-    ctrl.dispose();
+    // 다이얼로그 dismiss 애니메이션이 끝난 다음 frame에 dispose.
+    // 즉시 dispose하면 TextField rebuild가 disposed controller를 건드려 폭발.
+    WidgetsBinding.instance.addPostFrameCallback((_) => ctrl.dispose());
     return (result == null || result.isEmpty) ? null : result;
   }
 
@@ -984,6 +1133,205 @@ class _BudgetThreshold {
   final String message;
   final bool over;
   const _BudgetThreshold(this.message, {this.over = false});
+}
+
+class _TemplatePickerSheet extends StatelessWidget {
+  const _TemplatePickerSheet({
+    required this.templates,
+    required this.type,
+  });
+  final List<TransactionTemplate> templates;
+  final String type;
+
+  /// pop 시 이 값이 오면 부모는 "+ 새 템플릿 추가" 에디터를 띄움.
+  static const String addNewSentinel = '__add_new__';
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    return Container(
+      constraints: BoxConstraints(maxHeight: mq.size.height * 0.7),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius:
+            BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            width: 36,
+            height: 4,
+            decoration: BoxDecoration(
+              color: AppColors.line,
+              borderRadius: BorderRadius.circular(99),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+            child: Row(
+              children: [
+                Text(
+                  type == 'income' ? '수입 템플릿' : '지출 템플릿',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: Icon(Icons.close, color: AppColors.text3),
+                ),
+              ],
+            ),
+          ),
+          Flexible(
+            child: templates.isEmpty
+                ? _emptyState(context)
+                : ListView.separated(
+                    padding:
+                        const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                    itemCount: templates.length,
+                    separatorBuilder: (_, _) =>
+                        Divider(color: AppColors.line2, height: 1),
+                    itemBuilder: (ctx, i) {
+                      final t = templates[i];
+                      return InkWell(
+                        onTap: () => Navigator.of(ctx).pop(t),
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 12, horizontal: 4),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(t.name,
+                                        style: const TextStyle(
+                                          fontSize: 14.5,
+                                          fontWeight: FontWeight.w700,
+                                        )),
+                                    if (_metaLine(t) != null) ...[
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        _metaLine(t)!,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.text3,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              if (t.amount > 0)
+                                Text(
+                                  won(t.amount),
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w700,
+                                    color: t.type == 'income'
+                                        ? AppColors.success
+                                        : AppColors.text,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          if (templates.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+              child: _addNewButton(context, prominent: false),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 빈 상태 + 목록 하단에서 공통으로 쓰는 "+ 새 템플릿 추가" 액션.
+  /// 부모가 sentinel을 받으면 별도 에디터를 띄움.
+  Widget _addNewButton(BuildContext context, {required bool prominent}) {
+    const label = '새 템플릿 추가';
+    if (prominent) {
+      return SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: () => Navigator.of(context).pop(addNewSentinel),
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text(label,
+              style: TextStyle(fontWeight: FontWeight.w600)),
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(0, 44),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () => Navigator.of(context).pop(addNewSentinel),
+        icon: const Icon(Icons.add, size: 18),
+        label: const Text(label,
+            style: TextStyle(fontWeight: FontWeight.w600)),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.primary,
+          side: BorderSide(color: AppColors.primary),
+          minimumSize: const Size(0, 42),
+        ),
+      ),
+    );
+  }
+
+  static String? _metaLine(TransactionTemplate t) {
+    final parts = <String>[];
+    if (t.major != null && t.major!.isNotEmpty) parts.add(t.major!);
+    if (t.sub != null && t.sub!.isNotEmpty) parts.add(t.sub!);
+    if (t.merchant != null && t.merchant!.isNotEmpty) parts.add(t.merchant!);
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+
+  Widget _emptyState(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(28, 12, 28, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.bookmark_border, size: 36, color: AppColors.text4),
+          const SizedBox(height: 10),
+          Text(
+            '등록한 템플릿이 없어요',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AppColors.text2,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '자주 쓰는 거래를 한 번 저장해두면\n다음부터 한 번에 불러올 수 있어요',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 12.5,
+              color: AppColors.text3,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 18),
+          _addNewButton(context, prominent: true),
+        ],
+      ),
+    );
+  }
 }
 
 class _PickChip extends StatelessWidget {

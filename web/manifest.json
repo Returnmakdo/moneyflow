@@ -1,11 +1,11 @@
 {
-    "name": "billionaire",
-    "short_name": "billionaire",
+    "name": "머니플로우",
+    "short_name": "머니플로우",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#3182F6",
     "theme_color": "#3182F6",
-    "description": "A new Flutter project.",
+    "description": "자산·지출·신용카드 한눈에 보는 가계부",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -319,6 +319,51 @@ class FixedStatus {
   });
 }
 
+/// 거래 템플릿(즐겨찾기). 사용자가 거래 모달에서 불러와서 폼을 prefill하는 카탈로그.
+/// fixed_expenses(날짜 자동 등록)와 의도가 다름 — 자동 적용 X.
+class TransactionTemplate {
+  final int id;
+  final String name;
+  final String type; // 'expense' | 'income'
+  final int amount;
+  final String? major;
+  final String? sub;
+  final String? merchant;
+  final String? memo;
+  final int? accountId;
+  final int? cardId;
+  final int sortOrder;
+
+  const TransactionTemplate({
+    required this.id,
+    required this.name,
+    required this.type,
+    required this.amount,
+    this.major,
+    this.sub,
+    this.merchant,
+    this.memo,
+    this.accountId,
+    this.cardId,
+    this.sortOrder = 0,
+  });
+
+  factory TransactionTemplate.fromJson(Map<String, dynamic> j) =>
+      TransactionTemplate(
+        id: (j['id'] as num).toInt(),
+        name: j['name'] as String,
+        type: (j['type'] as String?) ?? 'expense',
+        amount: (j['amount'] as num?)?.toInt() ?? 0,
+        major: j['major'] as String?,
+        sub: j['sub'] as String?,
+        merchant: j['merchant'] as String?,
+        memo: j['memo'] as String?,
+        accountId: (j['account_id'] as num?)?.toInt(),
+        cardId: (j['card_id'] as num?)?.toInt(),
+        sortOrder: (j['sort_order'] as num?)?.toInt() ?? 0,
+      );
+}
+
 class FixedExpense {
   final int id;
   final String name;

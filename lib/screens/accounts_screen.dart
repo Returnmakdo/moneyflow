@@ -633,11 +633,15 @@ class _CardCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          '${won(remainingBilling)}원',
+                          remainingBilling > 0
+                              ? '-${won(remainingBilling)}원'
+                              : '${won(remainingBilling)}원',
                           style: TextStyle(
                             fontSize: 14.5,
                             fontWeight: FontWeight.w700,
-                            color: AppColors.text,
+                            color: remainingBilling > 0
+                                ? AppColors.expenseText
+                                : AppColors.text,
                             fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),

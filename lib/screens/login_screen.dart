@@ -347,7 +347,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(width: 8),
                         const Text(
-                          '씀씀',
+                          '머니플로우',
                           style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
                         ),
                       ],

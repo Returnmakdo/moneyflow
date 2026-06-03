@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api.dart';
+import '../auth.dart';
 import '../data/changelog.dart';
 import '../theme.dart';
 import '../utils/csv_download_stub.dart'
@@ -19,11 +22,13 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _exporting = false;
   bool _hasUnseenChangelog = false;
+  String? _versionLabel;
 
   @override
   void initState() {
     super.initState();
     _checkChangelog();
+    _loadVersion();
     changelogSeenSignal.addListener(_checkChangelog);
   }
 
@@ -33,10 +38,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() => _versionLabel = 'v${info.version} (${info.buildNumber})');
+    } catch (_) {/* 무시 */}
+  }
+
   Future<void> _checkChangelog() async {
     final unseen = await hasUnseenChangelog();
     if (!mounted) return;
     setState(() => _hasUnseenChangelog = unseen);
+  }
+
+  /// 의견·오류 메일 발송 — 기본 메일 클라이언트 열기.
+  /// 본문에 앱 버전 + 사용자 ID(있을 때) 자동 채워서 디버깅 컨텍스트 확보.
+  Future<void> _sendFeedback() async {
+    String version = '';
+    String build = '';
+    try {
+      final info = await PackageInfo.fromPlatform();
+      version = info.version;
+      build = info.buildNumber;
+    } catch (_) {/* 무시 */}
+    final uid = AuthService.currentUserId ?? '(비로그인)';
+    final subject = '[머니플로우] 의견·오류 제보';
+    final body = '''
+아래에 내용을 적어주세요.
+
+
+
+---
+앱 버전: $version+$build
+사용자 ID: $uid
+''';
+    final uri = Uri(
+      scheme: 'mailto',
+      path: 'cldud970@gmail.com',
+      query: 'subject=${Uri.encodeComponent(subject)}'
+          '&body=${Uri.encodeComponent(body)}',
+    );
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && mounted) {
+        showToast(context, '메일 앱을 열 수 없어요', error: true);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      showToast(context, errorMessage(e), error: true);
+    }
+  }
+
+  /// 앱 리뷰 — Play Store 출시 전엔 안내 토스트.
+  /// 출시 후 url_launcher로 market:// 또는 https://play.google.com/store/apps/details URL 열기.
+  void _openReview() {
+    showToast(context, '곧 스토어 출시 예정이에요. 조금만 기다려주세요!');
   }
 
   Future<void> _exportCsv() async {
@@ -47,7 +104,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final stamp =
           '${ts.year}${ts.month.toString().padLeft(2, '0')}${ts.day.toString().padLeft(2, '0')}';
       final shared =
-          await triggerCsvDownload(csv, '씀씀_$stamp.csv');
+          await triggerCsvDownload(csv, '머니플로우_$stamp.csv');
       if (!mounted) return;
       if (!shared) showToast(context, 'CSV 파일을 다운로드했어요');
     } catch (e) {
@@ -100,8 +157,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _MenuItem(
                 icon: Icons.repeat,
                 title: '정기 거래 관리',
-                subtitle: '월세·구독료·월급처럼 매달 반복되는 거래',
+                subtitle: '매달 반복되는 거래',
                 onTap: () => context.go('/settings/fixed'),
+              ),
+              _MenuItem(
+                icon: Icons.bookmark_border,
+                title: '거래 템플릿',
+                subtitle: '자주 쓰는 거래 추가',
+                onTap: () => context.go('/settings/templates'),
               ),
               _MenuItem(
                 icon: Icons.upload_file_outlined,
@@ -111,8 +174,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               _MenuItem(
                 icon: Icons.download_outlined,
-                title: 'CSV 내보내기',
-                subtitle: _exporting ? '다운로드 중...' : '모든 거래내역 다운로드',
+                title: '데이터 백업',
+                subtitle: _exporting ? '백업 중...' : '거래내역을 파일로 저장',
                 trailing: _exporting
                     ? const SizedBox(
                         width: 16,
@@ -131,17 +194,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _MenuItem(
                 icon: Icons.help_outline,
                 title: '도움말',
-                subtitle: '소개 슬라이드 + 화면별 사용법',
+                subtitle: '화면별 사용법',
                 onTap: () => context.go('/settings/help'),
               ),
               _MenuItem(
                 icon: Icons.campaign_outlined,
                 title: '업데이트 소식',
-                subtitle: '새로 추가된 기능과 개선사항',
+                subtitle: '새 기능과 개선사항',
                 showBadge: _hasUnseenChangelog,
                 onTap: () => context.go('/settings/changelog'),
               ),
+              _MenuItem(
+                icon: Icons.mail_outline,
+                title: '오류·의견 보내기',
+                subtitle: '메일로 의견 보내기',
+                onTap: _sendFeedback,
+              ),
+              _MenuItem(
+                icon: Icons.star_outline,
+                title: '앱 리뷰 남기기',
+                subtitle: '스토어 별점 남기기',
+                onTap: _openReview,
+              ),
             ]),
+            if (_versionLabel != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 24, bottom: 8),
+                child: Center(
+                  child: Text(
+                    '머니플로우 ${_versionLabel!}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.text4,
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -263,6 +351,8 @@ class _MenuRow extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       item.subtitle!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 12.5,
                         color: AppColors.text3,

@@ -39,6 +39,7 @@ class Api {
   final ValueNotifier<int> fixedVersion = ValueNotifier(0);
   final ValueNotifier<int> accountsVersion = ValueNotifier(0);
   final ValueNotifier<int> cardsVersion = ValueNotifier(0);
+  final ValueNotifier<int> templatesVersion = ValueNotifier(0);
 
   void invalidateTx() {
     _txCache = null;
@@ -66,6 +67,7 @@ class Api {
     fixedVersion.value++;
     accountsVersion.value++;
     cardsVersion.value++;
+    templatesVersion.value++;
   }
 
   String _uid() {
@@ -1614,6 +1616,153 @@ class Api {
       inserted: inserted,
       skipped: skipped,
     );
+  }
+
+  // ── transaction templates (즐겨찾기 거래) ─────────────────────
+  /// 사용자 트리거 카탈로그. 거래 모달에서 불러와서 폼 prefill.
+  /// fixed_expenses와 다르게 자동 적용 X.
+  Future<List<TransactionTemplate>> listTemplates({String? type}) async {
+    dynamic query = sb.from('transaction_templates').select(
+        'id, name, type, amount, major, sub, merchant, memo, account_id, card_id, sort_order');
+    if (type != null) query = query.eq('type', type);
+    final rows = await query
+        .order('sort_order', ascending: true)
+        .order('id', ascending: true);
+    return (rows as List)
+        .map((e) => TransactionTemplate.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<TransactionTemplate> createTemplate({
+    required String name,
+    required String type,
+    int amount = 0,
+    String? major,
+    String? sub,
+    String? merchant,
+    String? memo,
+    int? accountId,
+    int? cardId,
+  }) async {
+    final userId = _uid();
+    final n = name.trim();
+    if (n.isEmpty) throw Exception('템플릿 이름이 필요해요');
+    if (type != 'expense' && type != 'income') {
+      throw Exception('지원하지 않는 type');
+    }
+    if (type == 'income' && cardId != null) {
+      throw Exception('수입은 카드로 받을 수 없어요');
+    }
+    if (type == 'expense' && accountId != null && cardId != null) {
+      throw Exception('계좌와 카드 중 하나만 선택해주세요');
+    }
+    if (amount <= 0) throw Exception('금액을 입력해주세요');
+    if (major == null || major.trim().isEmpty) {
+      throw Exception('카테고리를 선택해주세요');
+    }
+    final maxRow = await sb
+        .from('transaction_templates')
+        .select('sort_order')
+        .order('sort_order', ascending: false)
+        .limit(1)
+        .maybeSingle();
+    final next = ((maxRow?['sort_order'] as num?)?.toInt() ?? -1) + 1;
+    final payload = <String, dynamic>{
+      'user_id': userId,
+      'name': n,
+      'type': type,
+      'amount': math.max(0, amount),
+      'major': major.trim(),
+      'sub': sub?.trim().isEmpty == true ? null : sub?.trim(),
+      'merchant': merchant?.trim().isEmpty == true ? null : merchant?.trim(),
+      'memo': memo?.trim().isEmpty == true ? null : memo?.trim(),
+      'account_id': accountId,
+      'card_id': cardId,
+      'sort_order': next,
+    };
+    final row = await sb
+        .from('transaction_templates')
+        .insert(payload)
+        .select()
+        .single();
+    templatesVersion.value++;
+    return TransactionTemplate.fromJson(row);
+  }
+
+  Future<TransactionTemplate> updateTemplate(
+    int id, {
+    String? name,
+    String? type,
+    int? amount,
+    String? major,
+    String? sub,
+    String? merchant,
+    String? memo,
+    int? accountId,
+    int? cardId,
+    bool clearAccount = false,
+    bool clearCard = false,
+    bool clearMajor = false,
+    bool clearSub = false,
+    bool clearMerchant = false,
+    bool clearMemo = false,
+  }) async {
+    final payload = <String, dynamic>{};
+    if (name != null) {
+      final n = name.trim();
+      if (n.isEmpty) throw Exception('템플릿 이름이 필요해요');
+      payload['name'] = n;
+    }
+    if (type != null) {
+      if (type != 'expense' && type != 'income') {
+        throw Exception('지원하지 않는 type');
+      }
+      payload['type'] = type;
+    }
+    if (amount != null) payload['amount'] = math.max(0, amount);
+    if (clearMajor) {
+      payload['major'] = null;
+    } else if (major != null) {
+      payload['major'] = major.trim().isEmpty ? null : major.trim();
+    }
+    if (clearSub) {
+      payload['sub'] = null;
+    } else if (sub != null) {
+      payload['sub'] = sub.trim().isEmpty ? null : sub.trim();
+    }
+    if (clearMerchant) {
+      payload['merchant'] = null;
+    } else if (merchant != null) {
+      payload['merchant'] = merchant.trim().isEmpty ? null : merchant.trim();
+    }
+    if (clearMemo) {
+      payload['memo'] = null;
+    } else if (memo != null) {
+      payload['memo'] = memo.trim().isEmpty ? null : memo.trim();
+    }
+    if (clearAccount) {
+      payload['account_id'] = null;
+    } else if (accountId != null) {
+      payload['account_id'] = accountId;
+    }
+    if (clearCard) {
+      payload['card_id'] = null;
+    } else if (cardId != null) {
+      payload['card_id'] = cardId;
+    }
+    final row = await sb
+        .from('transaction_templates')
+        .update(payload)
+        .eq('id', id)
+        .select()
+        .single();
+    templatesVersion.value++;
+    return TransactionTemplate.fromJson(row);
+  }
+
+  Future<void> deleteTemplate(int id) async {
+    await sb.from('transaction_templates').delete().eq('id', id);
+    templatesVersion.value++;
   }
 
   // ── accounts ───────────────────────────────────────────────
