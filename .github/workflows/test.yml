@@ -15,7 +15,9 @@ jobs:
 
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          # 로컬 개발 SDK와 동일 버전 고정 — stable floating 시 새 lint로
+          # 예기치 않게 깨지는 것 방지. SDK 올릴 때 이 값도 함께 갱신.
+          flutter-version: 3.41.7
           cache: true
 
       - run: flutter pub get

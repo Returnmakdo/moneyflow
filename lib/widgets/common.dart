@@ -70,7 +70,7 @@ class PageHeader extends StatelessWidget {
               spacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                if (acts != null) ...acts,
+                ...?acts,
                 const _LogoutButton(),
               ],
             ),
