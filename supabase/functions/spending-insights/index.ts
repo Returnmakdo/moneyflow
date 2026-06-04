@@ -54,18 +54,44 @@ const SYSTEM_PROMPT = `당신은 친근한 한국 가계부 코치입니다. 사
 - ## 섹션은 너무 잔소리스럽게 나누지 말고 한 흐름으로
 - 자연스러운 한국어 표현 (조사·맞춤법 정확히)`;
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, content-type, apikey, x-client-info",
-};
+// CORS — 허용 Origin만 echo. 목록에 없는 브라우저 Origin은 Allow-Origin 미부착 →
+// 브라우저가 응답 차단. Origin 헤더 없는 요청(네이티브 안드/iOS 앱·서버·curl)은
+// CORS 미적용이라 그대로 통과(JWT로 보호됨). ALLOWED_ORIGINS 시크릿(콤마 구분)으로
+// 코드 재배포 없이 도메인 조정 가능.
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://billionaire-chi.vercel.app",
+  "https://billionaire-chi-vercel.app",
+  "http://localhost:8080",
+];
+const ALLOWED_ORIGINS = new Set(
+  Deno.env.get("ALLOWED_ORIGINS")
+    ?.split(",").map((s) => s.trim()).filter(Boolean) ?? DEFAULT_ALLOWED_ORIGINS,
+);
+
+function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.has(origin)) return true;
+  // 이 프로젝트의 Vercel preview/alias 배포 (billionaire-chi-<hash>.vercel.app 등)
+  return /^https:\/\/billionaire-chi[a-z0-9-]*\.vercel\.app$/.test(origin);
+}
+
+function corsHeaders(req: Request): Record<string, string> {
+  const h: Record<string, string> = {
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, content-type, apikey, x-client-info",
+    "Vary": "Origin",
+  };
+  const origin = req.headers.get("Origin");
+  if (origin && isAllowedOrigin(origin)) h["Access-Control-Allow-Origin"] = origin;
+  return h;
+}
 
 Deno.serve(async (req: Request) => {
+  const cors = corsHeaders(req);
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: CORS });
+    return new Response(null, { headers: cors });
   }
 
-  const headers = { ...CORS, "Content-Type": "application/json" };
+  const headers = { ...cors, "Content-Type": "application/json" };
 
   try {
     const auth = req.headers.get("Authorization");
@@ -125,7 +151,8 @@ Deno.serve(async (req: Request) => {
     ]);
 
     if (thisRes.error) {
-      return new Response(JSON.stringify({ error: thisRes.error.message }), {
+      console.error("tx fetch error:", thisRes.error.message);
+      return new Response(JSON.stringify({ error: "데이터를 불러오지 못했어요." }), {
         status: 500, headers,
       });
     }
@@ -307,6 +334,20 @@ Deno.serve(async (req: Request) => {
 
     const userPrompt = sections.join("\n\n");
 
+    // Rate limit — Anthropic 호출 직전에만 소진(캐시 hit은 위에서 이미 반환됨).
+    // force=true 캐시 우회 루프로 청구액 폭주하는 걸 시간당 한도로 차단.
+    // RPC 에러 시엔 fail-open(피처 안 깨지게) — 정상 동작 시에만 throttle.
+    const quota = await supabase.rpc("consume_ai_quota", {
+      p_bucket: "insights",
+      p_limit: 20,
+    });
+    if (!quota.error && quota.data === false) {
+      return new Response(JSON.stringify({
+        error: "rate_limited",
+        message: "AI 분석 요청이 너무 많아요. 잠시 후 다시 시도해 주세요.",
+      }), { status: 429, headers });
+    }
+
     const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
     if (!apiKey) {
       return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not set" }), {
@@ -349,7 +390,8 @@ Deno.serve(async (req: Request) => {
       usage: message.usage,
     }), { headers });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
+    console.error("spending-insights error:", e);
+    return new Response(JSON.stringify({ error: "분석 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요." }), {
       status: 500,
       headers,
     });

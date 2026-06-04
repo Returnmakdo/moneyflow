@@ -58,18 +58,14 @@
 	<string>Main</string>
 	<key>UIStatusBarHidden</key>
 	<false/>
+	<!-- 세로 고정 — Flutter setPreferredOrientations(portraitUp)와 일치. 가로 미지원. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<!-- Supabase OAuth / 비번 재설정 deep link 콜백 -->
 	<key>CFBundleURLTypes</key>

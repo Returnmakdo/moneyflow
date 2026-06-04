@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ 클라우드 백업 + 기기 간 이전(D2D) 규칙. SharedPreferences의
+     Supabase 세션 토큰을 둘 다에서 제외 — 토큰 유출/이전 방지. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="."/>
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="."/>
+    </device-transfer>
+</data-extraction-rules>

@@ -64,28 +64,28 @@ iOS 특수 주의:
 ## 3. 기술 점검 (출시 전)
 
 ### Android
-- [ ] `targetSdk = 35` 명시 (`android/app/build.gradle.kts`) — 2025-08-31부터 Play API 35 강제. 현재 `flutter.targetSdkVersion` 묵시 의존.
-- [ ] **Release signingConfig를 release 키로 분리** — `build.gradle.kts:39` 현재 debug 키 사용 중. release 빌드해도 Play Console 자동 거부.
+- [x] `targetSdk` — Flutter 3.41 기본값이 이미 **36**(compileSdk 36, minSdk 24, targetSdk 36)이라 Play 요건(≥35) 충족. `flutter.targetSdkVersion` 묵시 유지가 정답(35로 핀 박으면 다운그레이드). 별도 조치 불필요.
+- [~] **Release signingConfig를 release 키로 분리** — `build.gradle.kts` 배선 완료: `android/key.properties` 있으면 release 키 서명, 없으면 debug 폴백(개발용). **남은 건 keystore 생성 + key.properties 작성(사용자 비번)** → 아래 keystore 항목과 함께.
 - [ ] **ProGuard/R8 keep 규칙** — `proguard-rules.pro` 생성 + `isMinifyEnabled = true`. supabase·fl_chart·markdown 리플렉션 깨짐 방지. Sentry mapping 업로드와 연결.
-- [ ] **`backup_rules.xml` + `data_extraction_rules.xml`** — Android 12+ 자동 백업/이전에서 supabase 세션 토큰 포함 방지. `AndroidManifest`에 `android:allowBackup` / `dataExtractionRules` 명시.
-- [ ] **Network Security Config** (`res/xml/network_security_config.xml`) — HTTPS-only 명시. `usesCleartextTraffic="false"`.
+- [x] **`backup_rules.xml` + `data_extraction_rules.xml`** — 생성 완료. SharedPreferences(supabase 세션 토큰)를 클라우드 백업·기기 이전(D2D) 둘 다에서 제외. `AndroidManifest`에 `fullBackupContent`/`dataExtractionRules` 연결.
+- [x] **Network Security Config** (`res/xml/network_security_config.xml`) — `cleartextTrafficPermitted="false"` + 매니페스트 `usesCleartextTraffic="false"` & `networkSecurityConfig` 연결. 빌드 검증 완료.
 - [ ] **`SCHEDULE_EXACT_ALARM` 사용 사유** — Play Console에서 가계부는 "Calendars/Alarm clock" 카테고리 아니라 정당화 문구 강제. 카드 결제일 리마인더라는 사유 준비. `USE_EXACT_ALARM`만으로 가능한지 재검토.
-- [ ] **launch theme 다크 미러링** — `values-night/styles.xml` 흰 배경 부모 확인 (다크 OS 첫 프레임 흰빛).
+- [x] **launch theme 다크 미러링** — 확인 완료. `values-night`/`values-night-v31` 둘 다 `Theme.Black.NoTitleBar` 부모 + `forceDarkAllowed=false`라 다크 첫 프레임 흰빛 없음. 조치 불필요.
 - [ ] **Release 빌드 동작 확인** — `.aab` → `bundletool`로 APK 추출 → 실기기. debug와 다르게 깨지는 R8 minify 케이스.
 - [ ] dependencies 최신 — `flutter pub outdated`.
 
 ### iOS
-- [ ] **iOS deployment target 13.0+** — `Podfile` `platform :ios, '13.0'` 주석 해제. supabase_flutter 2.5는 iOS 12+지만 13 명시로 CocoaPods 경고 제거.
-- [ ] **iPad orientation 정리** — `UISupportedInterfaceOrientations~ipad` 4방향. 폰 전용 출시면 정리.
+- [x] **iOS deployment target 13.0+** — `Podfile` `platform :ios, '13.0'` 주석 해제 완료. (Mac에서 `pod install` 시 반영)
+- [x] **iPad orientation 정리** — iPhone·iPad `UISupportedInterfaceOrientations` 모두 Portrait 단일로 정리(세로 고정). Flutter `setPreferredOrientations`와 일치.
 - [ ] **LaunchScreen.storyboard** — `flutter_native_splash`가 안드만 갱신. iOS 네이티브 splash는 별도 점검.
 - [ ] **iOS 알림 권한 흐름** — 카드 결제일 푸시 정상 동작.
 - [ ] **Safe Area / Notch / Dynamic Island** 레이아웃 확인.
 - [ ] **Release archive 동작 확인** — Xcode → Product → Archive → 실기기 설치.
 
 ### 양 OS 공통 (인프라 보안)
-- [ ] **Edge Function CORS 화이트리스트** — `spending-insights/index.ts:58` `Access-Control-Allow-Origin: "*"` → prod 도메인만. 와일드카드면 anon key 가진 누구든 브라우저에서 호출 가능 (AI 비용 폭주 위험). `import-csv-assist/index.ts`도 동일.
-- [ ] **Edge Function rate limit** — `force=true` 호출로 캐시 우회 가능. (user_id, hour) 키로 throttle. Anthropic 청구액 폭주 방지.
-- [ ] **Edge Function error 메시지 정리** — `catch (e) { error: String(e) }` 그대로 클라이언트에 노출 (`spending-insights/index.ts:352`, `import-csv-assist`). 서버 로그만 남기고 사용자에겐 generic 메시지.
+- [x] **Edge Function CORS 화이트리스트** — `spending-insights`/`import-csv-assist` 둘 다 `Access-Control-Allow-Origin: "*"` 제거, 허용 Origin(prod vercel 도메인·`*.vercel.app` alias·localhost:8080)만 echo. Origin 헤더 없는 네이티브 앱은 그대로 통과. `ALLOWED_ORIGINS` 시크릿으로 재배포 없이 조정 가능. 2026-06-04 배포·라이브 검증 완료.
+- [x] **Edge Function rate limit** — `ai_rate_limits` 테이블 + `consume_ai_quota` SECURITY DEFINER RPC. Anthropic 호출 직전에만 (user_id, bucket, hour)별 소진 — insights 20/h, import 40/h. 초과 시 429 + 친절 토스트(`errorMessage`의 `FunctionException` 분기). 캐시 hit·parse-sheet는 미차감. 2026-06-04 배포.
+- [x] **Edge Function error 메시지 정리** — 두 함수의 `catch (e)` + DB 에러 + XLSX 파싱 에러를 `console.error`로 서버 로그만 남기고 사용자에겐 generic 한글 메시지. 의도적 한글 메시지("파일이 너무 커요" 등)는 유지. 클라 `errorMessage`의 `FunctionException` 분기는 서버 텍스트를 raw로 전달해 import 화면 세부 매핑 보존. 2026-06-04 배포.
 - [ ] **Edge Function 입력 크기 서버 측 검증** — `parseSheetFile` 4MB는 클라이언트 검증만. 서버 body size 검증 추가.
 - [ ] **`supabase/schema.sql` 갱신 or deprecated 표기** — `ai_insights`/`fixed_apply_log`/`transaction_templates` 등 후속 마이그레이션 미반영.
 - [ ] **크래시 트래커 연동 확인** — 강제 크래시 한 번 발생시켜 대시보드 도착 확인.
@@ -161,25 +161,26 @@ iOS 특수 주의:
 
 ### 우선순위
 1. **`api.dart` 자산·카드·정기 계산 로직** (가성비 최고)
-   - 카드 사이클 (`cycleAmount`, `cycleSettled`, `passedThisCycle`)
-   - 자산 합계 (`totalBalance = accountsBalance − cardDebtTotal`)
-   - 정기지출 자동 적용 (`_applyDueFixedImpl`) — dedupe + log
-   - 대시보드 집계 (`getDashboard`)
+   - [x] 카드 사이클 (`cycleAmount`, `cycleSettled`, `passedThisCycle`) — `lib/api/card_calc.dart`로 순수 함수 추출 + `test/card_calc_test.dart` (8 케이스: 사이클 윈도우·paymentLate 앞당김·31일+2월 윤년 clamp·미리결제·빨간줄)
+   - [x] 날짜 계산 (`clampDay`/`lastDayOf`) — `lib/utils/date_calc.dart` 추출 + `test/date_calc_test.dart` (15 케이스: 월경계·윤년 1900/2000)
+   - [ ] 자산 합계 (`totalBalance = accountsBalance − cardDebtTotal`) — `applyDelta`/잔고 집계도 순수 함수 추출하면 테스트 가능
+   - [ ] 정기지출 자동 적용 (`_applyDueFixedImpl`) — dedupe + log. sb 모킹 필요
+   - [ ] 대시보드 집계 (`getDashboard`) — sb 모킹 필요
 2. 위젯 테스트 우선순위 ↓
 3. Integration test는 골든패스 몇 개만
 
 ### 셋업
-- [ ] `mocktail` 또는 `mockito` 추가
-- [ ] Supabase `sb` 클라이언트 mock — 거래/계좌/카드 fixture 인메모리
-- [ ] 핵심 함수 케이스별 테스트
-- [ ] GitHub Actions로 `flutter test` 자동 실행
+- [x] **GitHub Actions로 `flutter test` + `analyze` 자동 실행** — `.github/workflows/test.yml` (push/PR on main)
+- [x] 순수 계산 함수 추출 + 케이스별 테스트 (카드 사이클·날짜) — 23개 통과
+- [ ] `mocktail` 추가 + Supabase `sb` mock — 정기 적용·대시보드 집계 테스트용 (남은 sb 의존 로직)
 
 ---
 
 ## 6. 출시 후 작업
 
 ### 다음 기능
-- [ ] **로컬 알림 강화** — 카드 결제 D-3 사전 알림, 예산 임박, 정기 거래 도래
+- [ ] **정기 거래 자동 등록 푸시** — `applyDueFixedTransactions`가 거래 추가했을 때 "월급 3,500,000원이 등록됐어요" 같은 알림. 자동 등록 그대로 진행되지만 사용자가 인지할 수 있게.
+- [ ] **로컬 알림 강화** — 카드 결제 D-3 사전 알림, 예산 임박
 - [ ] **안드 SMS 파싱** — 결제 SMS 자동 파싱 → 거래 자동 추가. 안드 전용 차별화
 - [ ] **위젯** — 안드 홈 위젯 / iOS 위젯에 오늘 지출·잔고
 - [ ] **오프라인 캐시** — `drift`로 로컬 캐시 + 백그라운드 sync

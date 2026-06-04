@@ -10,6 +10,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import Anthropic from "npm:@anthropic-ai/sdk@0.73.0";
 import * as XLSX from "npm:xlsx@0.18.5";
+import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 const MAPPING_SYSTEM = `당신은 한국 신용/체크카드 명세서(이용내역) CSV·XLS 가져오기 보조입니다. 파일 상단 row들을 보고 (1) 진짜 헤더 row가 어디인지, (2) 어느 컬럼이 무엇인지 추정합니다.
 
@@ -126,47 +127,85 @@ confidence:
 - medium: 일반 가맹점인데 추측 가능 (지역명+업종)
 - low: 정말 모를 때만`;
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, content-type, apikey, x-client-info",
-};
+// CORS — 허용 Origin만 echo. 목록에 없는 브라우저 Origin은 Allow-Origin 미부착 →
+// 브라우저가 응답 차단. Origin 헤더 없는 요청(네이티브 안드/iOS 앱·서버·curl)은
+// CORS 미적용이라 그대로 통과(JWT로 보호됨). ALLOWED_ORIGINS 시크릿(콤마 구분)으로
+// 코드 재배포 없이 도메인 조정 가능.
+const DEFAULT_ALLOWED_ORIGINS = [
+  "https://billionaire-chi.vercel.app",
+  "https://billionaire-chi-vercel.app",
+  "http://localhost:8080",
+];
+const ALLOWED_ORIGINS = new Set(
+  Deno.env.get("ALLOWED_ORIGINS")
+    ?.split(",").map((s) => s.trim()).filter(Boolean) ?? DEFAULT_ALLOWED_ORIGINS,
+);
 
-const JSON_HEADERS = { ...CORS, "Content-Type": "application/json" };
+function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.has(origin)) return true;
+  // 이 프로젝트의 Vercel preview/alias 배포 (billionaire-chi-<hash>.vercel.app 등)
+  return /^https:\/\/billionaire-chi[a-z0-9-]*\.vercel\.app$/.test(origin);
+}
+
+function corsHeaders(req: Request): Record<string, string> {
+  const h: Record<string, string> = {
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, content-type, apikey, x-client-info",
+    "Vary": "Origin",
+  };
+  const origin = req.headers.get("Origin");
+  if (origin && isAllowedOrigin(origin)) h["Access-Control-Allow-Origin"] = origin;
+  return h;
+}
 
 Deno.serve(async (req: Request) => {
+  const cors = corsHeaders(req);
+  const jsonHeaders = { ...cors, "Content-Type": "application/json" };
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: CORS });
+    return new Response(null, { headers: cors });
   }
 
   try {
     const auth = req.headers.get("Authorization");
-    if (!auth) return jsonError(401, "missing auth");
+    if (!auth) return errorResponse(401, "missing auth", jsonHeaders);
 
     const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!apiKey) return jsonError(500, "ANTHROPIC_API_KEY not set");
+    if (!apiKey) return errorResponse(500, "ANTHROPIC_API_KEY not set", jsonHeaders);
 
     const body = await req.json().catch(() => ({}));
     const mode: string | undefined = body?.mode;
 
     const client = new Anthropic({ apiKey });
+    // rate limit RPC 호출용 — 사용자 JWT로 생성.
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { Authorization: auth } } },
+    );
 
-    if (mode === "parse-sheet") return handleParseSheet(body);
-    if (mode === "mapping") return await handleMapping(client, body);
-    if (mode === "classify") return await handleClassify(client, body);
-    return jsonError(400, "invalid mode (expected 'parse-sheet', 'mapping', or 'classify')");
+    if (mode === "parse-sheet") return handleParseSheet(body, jsonHeaders);
+    if (mode === "mapping") return await handleMapping(client, supabase, body, jsonHeaders);
+    if (mode === "classify") return await handleClassify(client, supabase, body, jsonHeaders);
+    return errorResponse(400, "invalid mode (expected 'parse-sheet', 'mapping', or 'classify')", jsonHeaders);
   } catch (e) {
-    return jsonError(500, String(e));
+    console.error("import-csv-assist error:", e);
+    return errorResponse(500, "처리 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.", jsonHeaders);
   }
 });
 
-async function handleMapping(client: Anthropic, body: any): Promise<Response> {
+type JsonHeaders = Record<string, string>;
+
+async function handleMapping(client: Anthropic, supabase: SupabaseClient, body: any, jsonHeaders: JsonHeaders): Promise<Response> {
+  const jsonError = (status: number, message: string) => errorResponse(status, message, jsonHeaders);
   // 클라이언트가 파일 상단 row 10~12개를 firstRows로 통째로 보냄.
   // (어느 row가 헤더인지 모르고 보냄 — AI가 headerRowIndex로 알려줌)
   const firstRows: string[][] = body?.firstRows ?? [];
   if (!Array.isArray(firstRows) || firstRows.length === 0) {
     return jsonError(400, "firstRows (string[][]) required");
   }
+
+  const limited = await consumeQuota(supabase, jsonHeaders);
+  if (limited) return limited;
 
   const userPrompt = [
     `파일 상단 ${firstRows.length}개 row (헤더가 어느 row인지 추정해주세요):`,
@@ -208,7 +247,7 @@ async function handleMapping(client: Anthropic, body: any): Promise<Response> {
 
   return new Response(
     JSON.stringify({ mapping, usage: message.usage }),
-    { headers: JSON_HEADERS }
+    { headers: jsonHeaders }
   );
 }
 
@@ -252,7 +291,8 @@ function fixHeaderRow(mapping: any, firstRows: string[][]): any {
   return mapping;
 }
 
-async function handleClassify(client: Anthropic, body: any): Promise<Response> {
+async function handleClassify(client: Anthropic, supabase: SupabaseClient, body: any, jsonHeaders: JsonHeaders): Promise<Response> {
+  const jsonError = (status: number, message: string) => errorResponse(status, message, jsonHeaders);
   const merchants: string[] = body?.merchants ?? [];
   const userMajors: string[] = body?.userMajors ?? [];
   const userCategories: { major: string; sub: string }[] = body?.userCategories ?? [];
@@ -260,6 +300,9 @@ async function handleClassify(client: Anthropic, body: any): Promise<Response> {
   if (!Array.isArray(merchants) || merchants.length === 0) {
     return jsonError(400, "merchants (string[]) required");
   }
+
+  const limited = await consumeQuota(supabase, jsonHeaders);
+  if (limited) return limited;
 
   const catList = userCategories.length > 0
     ? userCategories.map((c) => `${c.major}/${c.sub}`).join(", ")
@@ -316,14 +359,15 @@ async function handleClassify(client: Anthropic, body: any): Promise<Response> {
 
   return new Response(
     JSON.stringify({ classification, usage: message.usage }),
-    { headers: JSON_HEADERS }
+    { headers: jsonHeaders }
   );
 }
 
 // xls(BIFF)·xlsx 같은 시트 포맷을 SheetJS로 파싱해서 headers + rows 반환.
 // 클라이언트가 base64 인코딩된 파일을 보냄. 한국 카드사 .xls(구버전)는
 // 클라이언트의 excel 패키지가 못 읽으니 서버 fallback으로 사용.
-function handleParseSheet(body: any): Response {
+function handleParseSheet(body: any, jsonHeaders: JsonHeaders): Response {
+  const jsonError = (status: number, message: string) => errorResponse(status, message, jsonHeaders);
   const fileBase64: string | undefined = body?.fileBase64;
   if (typeof fileBase64 !== "string" || fileBase64.length === 0) {
     return jsonError(400, "fileBase64 required");
@@ -347,7 +391,8 @@ function handleParseSheet(body: any): Response {
   try {
     wb = XLSX.read(bytes, { type: "array", cellDates: true, raw: false });
   } catch (e) {
-    return jsonError(400, `시트 파싱 실패: ${e}`);
+    console.error("parse-sheet XLSX.read error:", e);
+    return jsonError(400, "시트 파싱 실패");
   }
 
   if (!wb.SheetNames || wb.SheetNames.length === 0) {
@@ -396,7 +441,7 @@ function handleParseSheet(body: any): Response {
 
   return new Response(
     JSON.stringify({ headers, rows, sheetName: wb.SheetNames[0] }),
-    { headers: JSON_HEADERS }
+    { headers: jsonHeaders }
   );
 }
 
@@ -432,9 +477,28 @@ function extractJson(text: string): string | null {
   return null;
 }
 
-function jsonError(status: number, message: string): Response {
+function errorResponse(status: number, message: string, jsonHeaders: JsonHeaders): Response {
   return new Response(JSON.stringify({ error: message }), {
     status,
-    headers: JSON_HEADERS,
+    headers: jsonHeaders,
   });
+}
+
+// AI 호출 직전 시간당 한도 소진. 한도 초과면 429 Response, 통과면 null.
+// parse-sheet는 Anthropic을 안 쓰므로 호출 안 함. RPC 에러 시 fail-open(null).
+async function consumeQuota(
+  supabase: SupabaseClient,
+  jsonHeaders: JsonHeaders,
+): Promise<Response | null> {
+  const quota = await supabase.rpc("consume_ai_quota", {
+    p_bucket: "import",
+    p_limit: 40,
+  });
+  if (!quota.error && quota.data === false) {
+    return new Response(JSON.stringify({
+      error: "rate_limited",
+      message: "AI 정리 요청이 너무 많아요. 잠시 후 다시 시도해 주세요.",
+    }), { status: 429, headers: jsonHeaders });
+  }
+  return null;
 }

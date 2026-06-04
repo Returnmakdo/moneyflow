@@ -593,6 +593,7 @@ void showToast(BuildContext context, String message,
 String errorMessage(Object e) {
   if (e is AuthException) return _authMsg(e);
   if (e is PostgrestException) return _postgrestMsg(e);
+  if (e is FunctionException) return _functionMsg(e);
   final s = e is Exception ? e.toString() : '$e';
   final m = RegExp(r'^[A-Z]\w*(?:Exception|Error): ').firstMatch(s);
   final stripped = m != null
@@ -648,6 +649,23 @@ String _authMsg(AuthException e) {
     return '네트워크 오류가 발생했어요';
   }
   return '문제가 발생했어요. 잠시 후 다시 시도해주세요';
+}
+
+String _functionMsg(FunctionException e) {
+  // Edge Function이 보낸 body 텍스트를 그대로 노출.
+  // message(친절 문구) 우선, 없으면 error(서버 코드/문구) — 호출부에서
+  // 다시 substring 매핑하는 화면(import 등)이 원문을 받을 수 있게 raw로 전달.
+  final d = e.details;
+  if (d is Map) {
+    final m = d['message'];
+    if (m is String && m.trim().isNotEmpty) return m;
+    final err = d['error'];
+    if (err is String && err.trim().isNotEmpty) return err;
+  }
+  if (e.status == 429) {
+    return '요청이 너무 많아요. 잠시 후 다시 시도해주세요';
+  }
+  return '서버 처리 중 문제가 발생했어요. 잠시 후 다시 시도해주세요';
 }
 
 String _postgrestMsg(PostgrestException e) {

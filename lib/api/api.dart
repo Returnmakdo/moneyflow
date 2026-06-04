@@ -6,6 +6,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth.dart';
 import '../supabase.dart';
+import '../utils/date_calc.dart';
+import 'card_calc.dart';
 import 'models.dart';
 
 /// Supabase에 직접 통신하는 Repository.
@@ -1159,7 +1161,7 @@ class Api {
           .from('transactions')
           .select('id, date, merchant, major_category, type, is_fixed')
           .gte('date', '$month-01')
-          .lte('date', _lastDayOf(month)),
+          .lte('date', lastDayOf(month)),
       sb.from('fixed_apply_log').select('fixed_id').eq('month', month),
     ]);
     final fxs = results[0] as List;
@@ -1179,7 +1181,7 @@ class Api {
       final name = f['name'] as String;
       final major = f['major'] as String;
       final type = (f['type'] as String?) ?? 'expense';
-      final day = _clampDay(((f['day_of_month'] as num?)?.toInt() ?? 1),
+      final day = clampDay(((f['day_of_month'] as num?)?.toInt() ?? 1),
           month: month);
       final dueDate = '$month-${day.toString().padLeft(2, '0')}';
       // 매칭 거래 찾기 (merchant+major+type)
@@ -1239,7 +1241,7 @@ class Api {
     final n = name.trim();
     final m = major.trim();
     if (n.isEmpty || m.isEmpty) throw Exception('name, major 필수');
-    final day = _clampDay(dayOfMonth);
+    final day = clampDay(dayOfMonth);
     final maxRow = await sb
         .from('fixed_expenses')
         .select('sort_order')
@@ -1306,7 +1308,7 @@ class Api {
     if (sub != null) payload['sub'] = sub;
     if (amount != null) payload['amount'] = math.max(0, amount);
     if (card != null) payload['card'] = card;
-    if (dayOfMonth != null) payload['day_of_month'] = _clampDay(dayOfMonth);
+    if (dayOfMonth != null) payload['day_of_month'] = clampDay(dayOfMonth);
     if (active != null) payload['active'] = active ? 1 : 0;
     if (memo != null) payload['memo'] = memo;
     if (accountId != null) payload['account_id'] = accountId;
@@ -1422,7 +1424,7 @@ class Api {
       upTo =
           '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
     } else if (month.compareTo(ymToday) < 0) {
-      upTo = _lastDayOf(month);
+      upTo = lastDayOf(month);
     } else {
       return 0;
     }
@@ -1442,7 +1444,7 @@ class Api {
         .from('transactions')
         .select('merchant, major_category, is_fixed, type')
         .gte('date', '$month-01')
-        .lte('date', _lastDayOf(month));
+        .lte('date', lastDayOf(month));
     final existExpense = <String>{
       for (final e in existing as List)
         if ((e['is_fixed'] as num?)?.toInt() == 1 && e['type'] != 'income')
@@ -1469,7 +1471,7 @@ class Api {
       final name = it['name'] as String;
       final major = it['major'] as String;
       final fxType = (it['type'] as String?) ?? 'expense';
-      final day = _clampDay(
+      final day = clampDay(
         ((it['day_of_month'] as num?)?.toInt() ?? 1),
         month: month,
       );
@@ -1544,7 +1546,7 @@ class Api {
         .from('transactions')
         .select('merchant, major_category, is_fixed, type')
         .gte('date', '$month-01')
-        .lte('date', _lastDayOf(month));
+        .lte('date', lastDayOf(month));
     // expense는 is_fixed=1 거래로 dedupe, income은 type='income' 거래면
     // is_fixed 무관하게 dedupe (사용자가 직접 등록한 income도 중복 방지).
     final existExpense = <String>{
@@ -1564,7 +1566,7 @@ class Api {
       final name = it['name'] as String;
       final major = it['major'] as String;
       final fxType = (it['type'] as String?) ?? 'expense';
-      final day = _clampDay(
+      final day = clampDay(
         ((it['day_of_month'] as num?)?.toInt() ?? 1),
         month: month,
       );
@@ -1962,134 +1964,13 @@ class Api {
     var cardDebtTotal = 0;
     for (final c in cards) {
       final debt = debtByCard[c.id] ?? 0;
-      // 결제일까지 D-일 (이번 달 결제일 또는 다음 달).
-      // paymentDay가 month 일수보다 크면 그 month 마지막 날로 clamp.
-      // 예: paymentDay=31 + 2월(28/29일) → 2/28(또는 29)에 결제. 윤년 자동.
-      DateTime payDateOf(int y, int m) {
-        final maxDay = DateTime(y, m + 1, 0).day;
-        return DateTime(y, m, c.paymentDay.clamp(1, maxDay));
-      }
-      final thisMonthPay = payDateOf(today.year, today.month);
-      // needsSettlement: 결제일이 *지났는데* 이번 달 결제 거래 미등록.
-      final ymThisPay =
-          '${thisMonthPay.year}-${thisMonthPay.month.toString().padLeft(2, '0')}';
-      final settledThisMonth = txs.any((t) =>
-          t.type == 'card_payment' &&
-          t.cardId == c.id &&
-          t.ym == ymThisPay);
-      // 결제일이 month 끝을 넘으면 clamp된 값으로 비교 (예: 31 paymentDay + 2월).
-      final needs =
-          today.day > thisMonthPay.day && !settledThisMonth && debt > 0;
-      // 결제일 당일(예: 5/20)에 결제 등록을 마쳤다면 사이클이 끝났으므로
-      // 다음 결제 사이클로 넘김. 결제일 지났는데 미정산이면 paymentDate는
-      // 다음 달로 옮겨도 useThisMonthCycle은 needs로 다시 false에서 true.
-      final passedThisCycle = today.day > thisMonthPay.day ||
-          (today.day == thisMonthPay.day && settledThisMonth);
-      final paymentDate = passedThisCycle
-          ? payDateOf(today.year, today.month + 1)
-          : thisMonthPay;
-      final daysUntil =
-          paymentDate.difference(DateTime(today.year, today.month, today.day)).inDays;
-      // 사용기간 (statement_close_day 있을 때만):
-      // - 결제일 > 마감일(일반 카드): 다음 결제일 청구 사이클은 (전월 close+1 ~ 이번달 close)
-      // - 결제일 ≤ 마감일 (결제 9·마감 20 같은 카드): 마감 후 다음 달 9일이 아니라
-      //   *그 다음 달* 9일 결제. 사이클이 한 달 앞당겨짐 — paymentLate 보정.
-      // useThisMonthCycle은 사이클 계산 + 정산 기간 계산 둘 다에 쓰여서 밖에 둠.
-      final useThisMonthCycle = !passedThisCycle || needs;
-      String? cycleStartStr;
-      String? cycleEndStr;
-      if (c.statementCloseDay != null) {
-        final close = c.statementCloseDay!;
-        final paymentLate = c.paymentDay <= close;
-        late DateTime cs, ce;
-        // close가 month 일수보다 크면 그 month 마지막 날로 clamp.
-        // 예: close=31 + 2월(28/29일) → ce = 2/28(또는 29). 윤년 자동.
-        DateTime clamped(int y, int m) {
-          final maxDay = DateTime(y, m + 1, 0).day;
-          return DateTime(y, m, close.clamp(1, maxDay));
-        }
-        // 결제 빠른 카드는 사이클이 한 달 앞당겨짐.
-        final mOffsetEnd = useThisMonthCycle
-            ? (paymentLate ? -1 : 0)
-            : (paymentLate ? 0 : 1);
-        ce = clamped(today.year, today.month + mOffsetEnd);
-        cs = clamped(today.year, today.month + mOffsetEnd - 1)
-            .add(const Duration(days: 1));
-        String fmt(DateTime d) =>
-            '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-        cycleStartStr = fmt(cs);
-        cycleEndStr = fmt(ce);
-      }
-      // cycleAmount — 사이클 내 카드 사용 합계. 사이클 정보 없으면 미정산 부채.
-      // cycleSettled — 이번 결제 사이클의 결제 합. 미리 결제·분할 결제가 있을 때
-      // 자동 채움·카드 row가 *남은* 청구액으로 보이도록.
-      int cycleAmount;
-      int cycleSettled = 0;
-      if (cycleStartStr != null && cycleEndStr != null) {
-        cycleAmount = 0;
-        for (final t in txs) {
-          if (t.type == 'expense' &&
-              t.cardId == c.id &&
-              t.date.compareTo(cycleStartStr) >= 0 &&
-              t.date.compareTo(cycleEndStr) <= 0) {
-            cycleAmount += t.amount;
-          }
-        }
-        // 이번 사이클의 결제 = (지난 결제일 다음날 ~ 이번 결제일) 사이의
-        // card_payment. 이렇게 잡아야 사이클 중간(마감일 전)에 미리 결제한 것도
-        // 잡히고 옛 사이클 결제일 거래는 빠짐. useThisMonthCycle=false면 다음
-        // 결제 사이클의 결제 기간(이번 결제일 다음날 ~ 다음 결제일).
-        late DateTime settleStartDate, settleEndDate;
-        if (useThisMonthCycle) {
-          final lastPay = payDateOf(today.year, today.month - 1);
-          settleStartDate = lastPay.add(const Duration(days: 1));
-          settleEndDate = thisMonthPay;
-        } else {
-          settleStartDate = thisMonthPay.add(const Duration(days: 1));
-          settleEndDate = payDateOf(today.year, today.month + 1);
-        }
-        String fmtDate(DateTime d) =>
-            '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-        final settleStartStr = fmtDate(settleStartDate);
-        final settleEndStr = fmtDate(settleEndDate);
-        for (final t in txs) {
-          if (t.type == 'card_payment' &&
-              t.cardId == c.id &&
-              t.date.compareTo(settleStartStr) >= 0 &&
-              t.date.compareTo(settleEndStr) <= 0) {
-            cycleSettled += t.amount;
-          }
-        }
-      } else {
-        cycleAmount = debt;
-      }
-      // 빨간 줄(needsSettle) 최종 판정 — 부분 결제 후 남은 청구액 케이스도 잡음.
-      // 사이클 정보 있는 카드: 결제일 지났는데 *옛 사이클* 미정산이 있으면 빨간 줄.
-      //   oldDebt = debt − remainingBilling (다음 사이클 청구분 제외).
-      // 사이클 정보 없는 카드: 기존 로직 (debt > 0 + 이번 달 결제 거래 미존재).
-      final bool finalNeeds;
-      if (c.statementCloseDay != null) {
-        final remainingBilling =
-            (cycleAmount - cycleSettled).clamp(0, debt);
-        final oldDebt = debt - remainingBilling;
-        finalNeeds = today.day > thisMonthPay.day && oldDebt > 0;
-      } else {
-        finalNeeds = needs;
-      }
-      cardSummaries.add(CardSummary(
-        cardId: c.id,
-        name: c.name,
-        paymentDay: c.paymentDay,
-        linkedAccountId: c.linkedAccountId,
+      // 카드 사이클·청구 계산은 순수 함수로 분리 (card_calc.dart, 단위 테스트 대상).
+      cardSummaries.add(computeCardSummary(
+        card: c,
+        debt: debt,
+        txs: txs,
+        today: today,
         linkedAccountName: accountNames[c.linkedAccountId],
-        active: c.active,
-        pendingAmount: debt,
-        cycleAmount: cycleAmount,
-        cycleSettled: cycleSettled,
-        daysUntilPayment: daysUntil,
-        needsSettlement: finalNeeds,
-        cycleStart: cycleStartStr,
-        cycleEnd: cycleEndStr,
       ));
       cardDebtTotal += debt;
     }
@@ -2108,7 +1989,7 @@ class Api {
     for (final ym in months) {
       // 이번 달 cutoff은 오늘 — 미래 일자 거래(예정)는 자산 추이에 미포함.
       // 과거 월은 그 월 말일까지 누적.
-      final monthEnd = _lastDayOf(ym);
+      final monthEnd = lastDayOf(ym);
       final cutoff =
           monthEnd.compareTo(todayStr) > 0 ? todayStr : monthEnd;
       final byAcc = <int, int>{
@@ -2570,7 +2451,7 @@ class Api {
         .from('transactions')
         .select('merchant, major_category, is_fixed, type')
         .gte('date', '$month-01')
-        .lte('date', _lastDayOf(month));
+        .lte('date', lastDayOf(month));
     // expense는 is_fixed=1 거래로 dedupe, income은 type='income' 거래면
     // is_fixed 무관하게 dedupe (사용자가 직접 등록한 income도 중복 방지).
     final existExpense = <String>{
@@ -2609,22 +2490,6 @@ String _prevYm(String ym) {
   final parts = ym.split('-').map(int.parse).toList();
   final d = DateTime(parts[0], parts[1] - 1, 1);
   return _ymOf(d);
-}
-
-int _clampDay(int day, {String? month}) {
-  final d = day.clamp(1, 31);
-  if (month == null) return d;
-  final parts = month.split('-').map(int.parse).toList();
-  final lastDay = DateTime(parts[0], parts[1] + 1, 0).day;
-  return math.min(d, lastDay);
-}
-
-/// YYYY-MM-DD 형식의 그 달 마지막 날. 2월·4·6·9·11월 자동 처리(윤년 포함).
-/// query의 `.lte('date', '$month-31')` 같은 문자열 hack 대신 명시.
-String _lastDayOf(String ym) {
-  final parts = ym.split('-').map(int.parse).toList();
-  final last = DateTime(parts[0], parts[1] + 1, 0);
-  return '${last.year}-${last.month.toString().padLeft(2, '0')}-${last.day.toString().padLeft(2, '0')}';
 }
 
 /// CSV 한 필드 escape — 콤마/큰따옴표/줄바꿈 포함 시 큰따옴표로 감쌈.

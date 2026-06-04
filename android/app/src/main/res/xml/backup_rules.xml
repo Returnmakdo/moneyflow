@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 이하 자동 백업 규칙. SharedPreferences에 Supabase 세션 토큰이
+     저장되므로 백업에서 제외 — 다른 기기로 토큰이 새지 않게. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="."/>
+</full-backup-content>
