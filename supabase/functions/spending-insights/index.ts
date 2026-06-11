@@ -59,8 +59,8 @@ const SYSTEM_PROMPT = `당신은 친근한 한국 가계부 코치입니다. 사
 // CORS 미적용이라 그대로 통과(JWT로 보호됨). ALLOWED_ORIGINS 시크릿(콤마 구분)으로
 // 코드 재배포 없이 도메인 조정 가능.
 const DEFAULT_ALLOWED_ORIGINS = [
-  "https://billionaire-chi.vercel.app",
-  "https://billionaire-chi-vercel.app",
+  "https://moneyflow-kr.vercel.app",
+  "https://moneyflow-kr-vercel.app",
   "http://localhost:8080",
 ];
 const ALLOWED_ORIGINS = new Set(
@@ -70,8 +70,8 @@ const ALLOWED_ORIGINS = new Set(
 
 function isAllowedOrigin(origin: string): boolean {
   if (ALLOWED_ORIGINS.has(origin)) return true;
-  // 이 프로젝트의 Vercel preview/alias 배포 (billionaire-chi-<hash>.vercel.app 등)
-  return /^https:\/\/billionaire-chi[a-z0-9-]*\.vercel\.app$/.test(origin);
+  // 이 프로젝트의 Vercel preview/alias 배포 (moneyflow-kr-<hash>.vercel.app 등)
+  return /^https:\/\/moneyflow-kr[a-z0-9-]*\.vercel\.app$/.test(origin);
 }
 
 function corsHeaders(req: Request): Record<string, string> {

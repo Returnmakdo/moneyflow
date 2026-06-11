@@ -10,7 +10,7 @@ import '../theme.dart';
 /// 개인정보처리방침 — 웹 빌드에 포함된 정적 페이지(web/privacy.html). Vercel SPA
 /// rewrite는 실존 파일은 그대로 서빙하므로 이 경로가 바로 열린다. 스토어 콘솔에도
 /// 동일 URL을 등록한다.
-const kPrivacyPolicyUrl = 'https://billionaire-chi.vercel.app/privacy.html';
+const kPrivacyPolicyUrl = 'https://moneyflow-kr.vercel.app/privacy.html';
 
 const _kCardShadow = [
   BoxShadow(color: Color(0x0A0F172A), blurRadius: 6, offset: Offset(0, 1)),
