@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show OAuthProvider;
+import 'package:url_launcher/url_launcher.dart';
 import '../auth.dart';
 import '../theme.dart';
-import '../widgets/common.dart' show errorMessage;
+import '../widgets/common.dart' show errorMessage, kPrivacyPolicyUrl;
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -22,6 +23,8 @@ class _LoginScreenState extends State<LoginScreen> {
   final _passConfirmCtrl = TextEditingController();
   bool _busy = false;
   bool _signupMode = false;
+  // 회원가입 시 개인정보처리방침 동의 — 미동의면 가입 버튼 비활성.
+  bool _agreedPrivacy = false;
 
   // 가입 모드일 때 이메일 실시간 중복 체크 상태.
   Timer? _emailCheckTimer;
@@ -57,6 +60,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void _toggleMode() {
     setState(() {
       _signupMode = !_signupMode;
+      _agreedPrivacy = false;
       _nameCtrl.clear();
       _passCtrl.clear();
       _passConfirmCtrl.clear();
@@ -122,12 +126,26 @@ class _LoginScreenState extends State<LoginScreen> {
     });
   }
 
+  Future<void> _openPrivacyPolicy() async {
+    try {
+      final ok = await launchUrl(Uri.parse(kPrivacyPolicyUrl),
+          mode: LaunchMode.externalApplication);
+      if (!ok && mounted) _showError('처리방침을 열 수 없어요');
+    } catch (e) {
+      if (mounted) _showError(errorMessage(e));
+    }
+  }
+
   Future<void> _submit() async {
     FocusManager.instance.primaryFocus?.unfocus();
     final email = _emailCtrl.text.trim();
     final password = _passCtrl.text;
     if (email.isEmpty || password.isEmpty) {
       _showError('이메일과 비밀번호를 입력해주세요');
+      return;
+    }
+    if (_signupMode && !_agreedPrivacy) {
+      _showError('개인정보처리방침에 동의해주세요');
       return;
     }
     if (_signupMode) {
@@ -475,9 +493,20 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                     ],
+                    if (_signupMode) ...[
+                      const SizedBox(height: 14),
+                      _PrivacyConsent(
+                        agreed: _agreedPrivacy,
+                        onChanged: (v) =>
+                            setState(() => _agreedPrivacy = v),
+                        onOpenPolicy: _openPrivacyPolicy,
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     FilledButton(
-                      onPressed: _busy ? null : _submit,
+                      onPressed: _busy || (_signupMode && !_agreedPrivacy)
+                          ? null
+                          : _submit,
                       child: Text(submitLabel),
                     ),
                     const SizedBox(height: 16),
@@ -531,6 +560,69 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 회원가입 개인정보처리방침 동의 줄 — 체크박스 + "처리방침" 링크.
+class _PrivacyConsent extends StatelessWidget {
+  const _PrivacyConsent({
+    required this.agreed,
+    required this.onChanged,
+    required this.onOpenPolicy,
+  });
+  final bool agreed;
+  final ValueChanged<bool> onChanged;
+  final VoidCallback onOpenPolicy;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => onChanged(!agreed),
+      borderRadius: BorderRadius.circular(AppRadius.sm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: Checkbox(
+                value: agreed,
+                onChanged: (v) => onChanged(v ?? false),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  GestureDetector(
+                    onTap: onOpenPolicy,
+                    child: Text(
+                      '개인정보처리방침',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.primary,
+                        fontWeight: FontWeight.w700,
+                        decoration: TextDecoration.underline,
+                        decorationColor: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '에 동의합니다',
+                    style: TextStyle(fontSize: 13, color: AppColors.text2),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

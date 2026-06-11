@@ -90,6 +90,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// 외부 웹 URL(처리방침 등)을 브라우저로 연다.
+  Future<void> _openExternal(String url, String label) async {
+    try {
+      final ok = await launchUrl(Uri.parse(url),
+          mode: LaunchMode.externalApplication);
+      if (!ok && mounted) showToast(context, '$label을 열 수 없어요', error: true);
+    } catch (e) {
+      if (!mounted) return;
+      showToast(context, errorMessage(e), error: true);
+    }
+  }
+
   /// 앱 리뷰 — Play Store 출시 전엔 안내 토스트.
   /// 출시 후 url_launcher로 market:// 또는 https://play.google.com/store/apps/details URL 열기.
   void _openReview() {
@@ -215,6 +227,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: '앱 리뷰 남기기',
                 subtitle: '스토어 별점 남기기',
                 onTap: _openReview,
+              ),
+            ]),
+            _menuGroup([
+              _MenuItem(
+                icon: Icons.privacy_tip_outlined,
+                title: '개인정보처리방침',
+                subtitle: '수집 항목·보관·삭제 안내',
+                onTap: () => _openExternal(kPrivacyPolicyUrl, '처리방침'),
               ),
             ]),
             if (_versionLabel != null)

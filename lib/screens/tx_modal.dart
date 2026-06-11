@@ -429,16 +429,17 @@ class _TxModalState extends State<_TxModal> {
       ),
     );
     if (!mounted) return;
+    // 토스트 없이 폼만 채운다. 하단 floating 토스트는 모달의 '추가' 버튼 위에
+    // 겹쳐 1.9초간 탭을 가로채는데, 템플릿 적용은 폼이 채워지는 걸로 충분히 보여
+    // 토스트가 불필요하다.
     if (picked is TransactionTemplate) {
       _applyTemplate(picked);
-      showToast(context, '"${picked.name}" 템플릿을 불러왔어요');
     } else if (picked == _TemplatePickerSheet.addNewSentinel) {
       // 새 템플릿 에디터 → 저장하면 자동으로 폼에 적용.
       final created =
           await showTemplateEditor(context, initialType: _type);
       if (!mounted || created == null) return;
       _applyTemplate(created);
-      showToast(context, '"${created.name}" 템플릿을 불러왔어요');
     }
   }
 
@@ -1250,7 +1251,8 @@ class _TemplatePickerSheet extends StatelessWidget {
           ),
           if (templates.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 16),
+              // 하단 안전영역(홈 인디케이터)만큼 더 띄워 버튼이 가리지 않게.
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 16 + mq.padding.bottom),
               child: _addNewButton(context, prominent: false),
             ),
         ],
@@ -1302,7 +1304,8 @@ class _TemplatePickerSheet extends StatelessWidget {
 
   Widget _emptyState(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(28, 12, 28, 24),
+      padding: EdgeInsets.fromLTRB(
+          28, 12, 28, 24 + MediaQuery.of(context).padding.bottom),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

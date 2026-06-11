@@ -7,6 +7,10 @@ const supabaseAnonKey =
 Future<void> initSupabase() async {
   await Supabase.initialize(
     url: supabaseUrl,
+    // TODO(출시 전후): supabase_flutter 2.14+에서 anonKey deprecated → 차기 메이저에서
+    // 제거 예정. Supabase 대시보드에서 publishable key(sb_publishable_...) 발급 후
+    // publishableKey 파라미터로 교체할 것. 현재 anon JWT는 RLS로 계속 동작.
+    // ignore: deprecated_member_use
     anonKey: supabaseAnonKey,
     // implicit 흐름: 메일 링크가 다른 브라우저/탭에서 열려도 동작.
     // PKCE는 같은 브라우저의 localStorage에 verifier 의존해서 비번 재설정에서

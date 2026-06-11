@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../auth.dart';
 import '../supabase.dart';
 import '../utils/date_calc.dart';
+import 'asset_calc.dart';
 import 'card_calc.dart';
 import 'models.dart';
 
@@ -1891,42 +1892,6 @@ class Api {
     final cards = results[1] as List<CreditCard>;
     final txs = results[2] as List<Tx>;
 
-    // 거래 한 건의 계좌·카드 영향을 byAcc/byCard 맵에 직접 누적.
-    // 거래의 account_id/card_id로 즉시 매핑 — 기존엔 거래 × (계좌+카드) iteration이라
-    // 1년+ 사용자에서 체감. O(N) → O(N + M + K).
-    void applyDelta(Tx t, Map<int, int> byAcc, Map<int, int> byCard) {
-      void addAcc(int? accId, int delta) {
-        if (accId == null) return;
-        final cur = byAcc[accId];
-        if (cur != null) byAcc[accId] = cur + delta;
-      }
-      void addCard(int? cardId, int delta) {
-        if (cardId == null) return;
-        final cur = byCard[cardId];
-        if (cur != null) byCard[cardId] = cur + delta;
-      }
-      switch (t.type) {
-        case 'expense':
-          if (t.cardId != null) {
-            addCard(t.cardId, t.amount);
-          } else {
-            addAcc(t.accountId, -t.amount);
-          }
-          break;
-        case 'income':
-          addAcc(t.accountId, t.amount);
-          break;
-        case 'transfer':
-          addAcc(t.fromAccountId, -t.amount);
-          addAcc(t.toAccountId, t.amount);
-          break;
-        case 'card_payment':
-          addAcc(t.fromAccountId, -t.amount);
-          addCard(t.cardId, -t.amount);
-          break;
-      }
-    }
-
     // 미래 일자 거래는 자산 계산에서 제외 — 정기지출 일괄 등록을 미리 눌러도
     // 도래 전엔 자산에서 안 빠짐. 가계부 표준(토스/뱅샐) 동작.
     // cycleAmount(다음 결제일 청구액)는 예외 — 예정 사용액 표시용이라 그대로.
@@ -1934,17 +1899,16 @@ class Api {
     final todayStr =
         '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
 
-    // 현재 계좌 잔고 + 카드 부채 — 거래 *1회 순회*로 같이 누적.
-    // 기존 코드는 거래 N건 × (계좌 M + 카드 K) iteration이었음 — 1년+ 사용자에서
-    // 체감. 거래의 account_id/card_id로 직접 매핑하면 O(N + M + K).
-    final currentByAcc = <int, int>{
-      for (final a in accounts) a.id: a.initialBalance,
-    };
-    final debtByCard = <int, int>{for (final c in cards) c.id: 0};
-    for (final t in txs) {
-      if (t.date.compareTo(todayStr) > 0) continue;
-      applyDelta(t, currentByAcc, debtByCard);
-    }
+    // 현재 계좌 잔고 + 카드 부채 — 순수 함수(asset_calc.dart)로 계산, 단위 테스트 대상.
+    // 거래의 account_id/card_id로 직접 매핑 — O(N + M + K).
+    final current = computeBalances(
+      accounts: accounts,
+      cards: cards,
+      txs: txs,
+      cutoff: todayStr,
+    );
+    final currentByAcc = current.byAccount;
+    final debtByCard = current.byCard;
     final perAccount = accounts
         .map((a) => AccountBalance(
               accountId: a.id,
@@ -1955,10 +1919,9 @@ class Api {
               active: a.active,
             ))
         .toList();
-    final accountsBalance =
-        perAccount.fold<int>(0, (s, a) => s + a.balance);
+    final accountsBalance = current.accountsBalance;
 
-    // 카드별 미정산 부채 — 위 루프에서 이미 계산됨 (debtByCard).
+    // 카드별 미정산 부채 — 위 computeBalances에서 이미 계산됨 (debtByCard).
     final accountNames = {for (final a in accounts) a.id: a.name};
     final cardSummaries = <CardSummary>[];
     var cardDebtTotal = 0;
@@ -1992,21 +1955,15 @@ class Api {
       final monthEnd = lastDayOf(ym);
       final cutoff =
           monthEnd.compareTo(todayStr) > 0 ? todayStr : monthEnd;
-      final byAcc = <int, int>{
-        for (final a in accounts) a.id: a.initialBalance,
-      };
-      final byCard = <int, int>{for (final c in cards) c.id: 0};
-      for (final t in txs) {
-        if (t.date.compareTo(cutoff) > 0) continue;
-        applyDelta(t, byAcc, byCard);
-      }
-      final monthAccounts = accounts.fold<int>(
-          0, (s, a) => s + (byAcc[a.id] ?? a.initialBalance));
-      final monthCards =
-          cards.fold<int>(0, (s, c) => s + (byCard[c.id] ?? 0));
+      final monthBal = computeBalances(
+        accounts: accounts,
+        cards: cards,
+        txs: txs,
+        cutoff: cutoff,
+      );
       trend.add(AssetTrendPoint(
         ym: ym,
-        totalAssets: monthAccounts - monthCards,
+        totalAssets: monthBal.totalBalance,
       ));
     }
 

@@ -1,6 +1,22 @@
--- 가계부 Supabase 스키마 (참고용 스냅샷).
--- 실제 DB는 mcp__supabase__apply_migration 으로 누적 관리.
--- 이 파일은 신규 환경 1회 부트스트랩이나 구조 파악용.
+-- 가계부 Supabase 스키마 (참고용 스냅샷 — 비완전/NON-AUTHORITATIVE).
+-- 실제 DB는 mcp__supabase__apply_migration 으로 누적 관리하며, 이 파일은
+-- 신규 환경 1회 부트스트랩이나 구조 파악용이다. 아래 핵심 테이블 일부만 담겨
+-- 있고 후속 마이그레이션은 반영돼 있지 않다 — 정확한 최신 구조는 Supabase
+-- 마이그레이션 히스토리를 source of truth로 삼을 것.
+--
+-- ⚠️ 이 파일에 *아직 반영되지 않은* 프로덕션 객체 (CLAUDE.md 기준):
+--   테이블:
+--     • ai_insights          PK(user_id, month), content text, generated_at
+--     • fixed_apply_log       PK(user_id, fixed_id, month)  -- 정기거래 중복적용 차단
+--     • transaction_templates 거래 템플릿(이름/type/금액/카테고리/계좌·카드 등)
+--     • ai_rate_limits        (user_id, bucket, hour) AI 호출 쿼터
+--   함수/RPC:
+--     • seed_default_data_for_new_user  -- auth.users INSERT 시 기본 데이터 시드
+--     • tx_invalidate_ai_insights        -- 거래 변경 시 해당 월 AI 캐시 무효화
+--     • check_email_exists(p_email)      -- 가입 실시간 중복 체크
+--     • delete_my_account()              -- 본인 계정 + CASCADE 삭제
+--     • consume_ai_quota(...)            -- AI 호출 쿼터 소진(SECURITY DEFINER)
+--   ※ 위 객체의 정확한 DDL은 이 스냅샷에서 검증 불가 — 마이그레이션 참조.
 
 -- 1) 테이블
 

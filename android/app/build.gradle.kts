@@ -65,6 +65,16 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
+            // R8 코드 축소·난독화 + 미사용 리소스 제거 → .aab 용량↓.
+            // keep 규칙은 proguard-rules.pro 참조. Flutter 기본 규칙도 자동 적용됨.
+            // ⚠️ 최초 적용 후 반드시 `flutter build appbundle --release` + 실기기로
+            //    동작 검증할 것 (R8가 깨는 케이스는 release 빌드에서만 드러남).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 }

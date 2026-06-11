@@ -1,9 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../auth.dart';
 import '../theme.dart';
+
+/// 개인정보처리방침 — 웹 빌드에 포함된 정적 페이지(web/privacy.html). Vercel SPA
+/// rewrite는 실존 파일은 그대로 서빙하므로 이 경로가 바로 열린다. 스토어 콘솔에도
+/// 동일 URL을 등록한다.
+const kPrivacyPolicyUrl = 'https://billionaire-chi.vercel.app/privacy.html';
 
 const _kCardShadow = [
   BoxShadow(color: Color(0x0A0F172A), blurRadius: 6, offset: Offset(0, 1)),
@@ -545,46 +552,150 @@ class EmptyCard extends StatelessWidget {
 /// 토스트 (스낵바) — floating 캡슐, 좌측 상태 아이콘, 다크/라이트 자동 대응.
 /// bg = AppColors.text(라이트=흑·다크=백), fg = AppColors.bg 반대색.
 /// error=true면 danger 빨강 + 흰 글씨로 강조.
+// 현재 떠 있는 토스트 1개만 유지 (새 토스트가 이전 걸 대체).
+OverlayEntry? _toastEntry;
+
+/// 하단 floating 토스트.
+///
+/// **Overlay + IgnorePointer**로 띄운다 — 이전엔 floating SnackBar라 모달 하단
+/// 고정 '추가/저장' 버튼 위에 겹쳐 지속시간(기본 1.9초) 동안 탭을 가로채서
+/// 버튼이 안 눌렸다. IgnorePointer라 화면 위 어떤 버튼도 막지 않는다.
 void showToast(BuildContext context, String message,
-    {bool error = false}) {
-  final bg = error ? AppColors.danger : AppColors.text;
-  final fg = error ? Colors.white : AppColors.bg;
-  ScaffoldMessenger.of(context)
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(
-      behavior: SnackBarBehavior.floating,
-      backgroundColor: bg,
-      elevation: 6,
-      duration: const Duration(milliseconds: 1900),
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-      ),
-      content: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            error
-                ? Icons.error_outline_rounded
-                : Icons.check_circle_rounded,
-            size: 18,
-            color: fg,
-          ),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Text(
-              message,
-              style: TextStyle(
-                color: fg,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
+    {bool error = false, Duration duration = const Duration(milliseconds: 1900)}) {
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  if (overlay == null) return;
+  // 이전 토스트 즉시 제거 (state dispose에서 타이머도 취소됨).
+  _toastEntry?.remove();
+  _toastEntry = null;
+
+  final mq = MediaQuery.of(context);
+  // 키보드가 올라와 있으면 그 위, 아니면 홈 인디케이터/하단 안전영역 위.
+  final bottom =
+      (mq.viewInsets.bottom > 0 ? mq.viewInsets.bottom : mq.padding.bottom) + 16;
+
+  late final OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (_) => _ToastWidget(
+      message: message,
+      error: error,
+      bottom: bottom,
+      duration: duration,
+      onDone: () {
+        if (_toastEntry == entry) {
+          entry.remove();
+          _toastEntry = null;
+        }
+      },
+    ),
+  );
+  _toastEntry = entry;
+  overlay.insert(entry);
+}
+
+class _ToastWidget extends StatefulWidget {
+  const _ToastWidget({
+    required this.message,
+    required this.error,
+    required this.bottom,
+    required this.duration,
+    required this.onDone,
+  });
+  final String message;
+  final bool error;
+  final double bottom;
+  final Duration duration;
+  final VoidCallback onDone;
+
+  @override
+  State<_ToastWidget> createState() => _ToastWidgetState();
+}
+
+class _ToastWidgetState extends State<_ToastWidget>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _fade = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 180),
+  );
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _fade.forward();
+    _timer = Timer(widget.duration, _dismiss);
+  }
+
+  Future<void> _dismiss() async {
+    if (!mounted) return;
+    await _fade.reverse();
+    widget.onDone();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _fade.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = widget.error ? AppColors.danger : AppColors.text;
+    final fg = widget.error ? Colors.white : AppColors.bg;
+    return Positioned(
+      left: 16,
+      right: 16,
+      bottom: widget.bottom,
+      child: IgnorePointer(
+        child: FadeTransition(
+          opacity: _fade,
+          child: Center(
+            child: Material(
+              color: Colors.transparent,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 12,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      widget.error
+                          ? Icons.error_outline_rounded
+                          : Icons.check_circle_rounded,
+                      size: 18,
+                      color: fg,
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        widget.message,
+                        style: TextStyle(
+                          color: fg,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ],
+        ),
       ),
-    ));
+    );
+  }
 }
 
 /// 사용자에게 보여줄 에러 메시지로 변환.
