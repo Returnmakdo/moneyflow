@@ -25,24 +25,64 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   static const _slides = <_Slide>[
     _Slide(
-      image: 'assets/onboarding/01.png',
-      title: '기록은 단순하게',
-      body: '거래를 추가하면 카테고리·태그·고정/변동까지 한 번에 정리해드려요.',
+      icon: Icons.edit_note_rounded,
+      accent: _Accent.primary,
+      title: '기록은 30초면 끝',
+      body: '지출·수입·이체를 몇 번의 탭으로 끝내요.',
+      points: [
+        '카테고리·고정/변동까지 한 번에 정리',
+        '자주 쓰는 거래는 템플릿으로 더 빠르게',
+      ],
     ),
     _Slide(
-      image: 'assets/onboarding/02.png',
+      icon: Icons.donut_small_rounded,
+      accent: _Accent.primary,
       title: '한 달이 한 화면에',
-      body: 'AI가 거래를 보고 패턴, 이상치, 다음 달 제안까지 짚어줘요.',
+      body: '이번 달 흐름을 대시보드에서 한눈에 봐요.',
+      points: [
+        '지출·수입·순저축 한눈에',
+        '어디에 많이 썼는지 카테고리 비율로',
+      ],
     ),
     _Slide(
-      image: 'assets/onboarding/03.png',
-      title: '예산은 한 번 세우고',
-      body: '카테고리별 진행률이 매일 자동으로 업데이트돼요.',
+      icon: Icons.account_balance_wallet_outlined,
+      accent: _Accent.success,
+      title: '흩어진 자산을 한 곳에',
+      body: '통장·현금·예적금까지 모아서 봐요.',
+      points: [
+        '총자산과 6개월 추이를 그래프로',
+        '계좌별 잔고가 거래에 따라 자동 갱신',
+      ],
     ),
     _Slide(
-      image: 'assets/onboarding/04.png',
-      title: '매달 반복되는 거래는 자동',
-      body: '월세·구독·월급, 한 번 등록하면 매달 자동 반영해요.',
+      icon: Icons.credit_card_rounded,
+      accent: _Accent.warning,
+      title: '신용카드도 정확하게',
+      body: '쓰는 순간 반영되고, 결제일에 또 빠지지 않아요.',
+      points: [
+        '이중 계산 없이 진짜 내 돈을 확인',
+        '결제일이 오면 청구액 정산까지 안내',
+      ],
+    ),
+    _Slide(
+      icon: Icons.pie_chart_outline_rounded,
+      accent: _Accent.primary,
+      title: '예산은 한 번만 세우면',
+      body: '카테고리별 진행률이 매일 자동 업데이트돼요.',
+      points: [
+        '고정비는 알아서 빼고 변동비만',
+        '얼마 남았는지 한눈에',
+      ],
+    ),
+    _Slide(
+      icon: Icons.repeat_rounded,
+      accent: _Accent.primary,
+      title: '반복되는 건 자동으로',
+      body: '월세·구독료·월급은 한 번만 등록하면 돼요.',
+      points: [
+        '매달 도래일에 알아서 기록',
+        '깜빡해도 빠지지 않게',
+      ],
     ),
   ];
 
@@ -236,61 +276,70 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 }
 
+enum _Accent { primary, success, warning, neutral }
+
 class _Slide {
   const _Slide({
-    required this.image,
+    required this.icon,
+    required this.accent,
     required this.title,
     required this.body,
+    this.points = const [],
   });
-  final String image;
+  final IconData icon;
+  final _Accent accent;
   final String title;
   final String body;
+  final List<String> points;
 }
 
 class _SlideView extends StatelessWidget {
   const _SlideView({required this.slide});
   final _Slide slide;
+
+  Color _accentColor() {
+    switch (slide.accent) {
+      case _Accent.primary:
+        return AppColors.primary;
+      case _Accent.success:
+        return AppColors.success;
+      case _Accent.warning:
+        return AppColors.warning;
+      case _Accent.neutral:
+        return AppColors.text2;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final accent = _accentColor();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(28, 4, 28, 4),
+      padding: const EdgeInsets.fromLTRB(32, 4, 32, 4),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // 실제 화면 스크린샷 — 부드러운 라운드 + 옅은 그림자로 카드 느낌.
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.08),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Image.asset(
-                  slide.image,
-                  fit: BoxFit.contain,
-                ),
-              ),
+          // 기능을 상징하는 큰 아이콘 — 톤에 맞춘 둥근 사각 배경.
+          Container(
+            width: 108,
+            height: 108,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(28),
             ),
+            child: Icon(slide.icon, size: 52, color: accent),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 32),
           Text(
             slide.title,
             textAlign: TextAlign.center,
             style: TextStyle(
               fontFamily: 'Pretendard',
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
               color: AppColors.text,
               height: 1.3,
-              letterSpacing: -0.4,
+              letterSpacing: -0.5,
             ),
           ),
           const SizedBox(height: 10),
@@ -299,11 +348,38 @@ class _SlideView extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(
               fontFamily: 'Pretendard',
-              fontSize: 13.5,
+              fontSize: 14.5,
               color: AppColors.text2,
-              height: 1.55,
+              height: 1.5,
             ),
           ),
+          if (slide.points.isNotEmpty) ...[
+            const SizedBox(height: 26),
+            ...slide.points.map(
+              (p) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Icon(Icons.check_circle_rounded, size: 18, color: accent),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        p,
+                        style: TextStyle(
+                          fontFamily: 'Pretendard',
+                          fontSize: 13.5,
+                          color: AppColors.text3,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

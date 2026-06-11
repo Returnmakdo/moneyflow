@@ -77,7 +77,7 @@ class HelpScreen extends StatelessWidget {
                           ),
                           SizedBox(height: 2),
                           Text(
-                            '핵심 기능 4가지 빠르게 훑어보기',
+                            '핵심 기능 빠르게 훑어보기',
                             style: TextStyle(
                               fontSize: 12.5,
                               color: AppColors.text2,
