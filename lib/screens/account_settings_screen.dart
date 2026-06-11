@@ -130,7 +130,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     final ok = await confirmDialog(
       context,
       title: '데이터 초기화',
-      message: '거래내역·카테고리·예산·정기 거래·AI 분석을 모두 삭제하고 \'기타\' 카테고리만 남깁니다. 계정은 유지돼요. 복구할 수 없어요.',
+      message: '거래내역·카테고리·예산·정기 거래를 모두 삭제하고 \'기타\' 카테고리만 남깁니다. 계정은 유지돼요. 복구할 수 없어요.',
       confirmText: '초기화',
       danger: true,
     );
@@ -362,7 +362,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '거래내역·카테고리·예산·정기 거래·AI 분석을 모두 지우고 \'기타\' 카테고리만 남겨서 신규 사용자 상태로 되돌려요. 계정은 유지돼요.',
+            '거래내역·카테고리·예산·정기 거래를 모두 지우고 \'기타\' 카테고리만 남겨서 신규 사용자 상태로 되돌려요. 계정은 유지돼요.',
             style: TextStyle(
               fontSize: 12.5,
               color: AppColors.text2,

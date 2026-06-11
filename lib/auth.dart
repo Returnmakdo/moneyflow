@@ -17,7 +17,9 @@ class AuthService {
   /// AI 카드 명세서 import 베타 — 출시 전엔 소수 사용자만. 진입점들이 이 값으로
   /// 조건부 hide. 라우트 자체는 살아있음 (URL 직접 입력 가능).
   /// 국외이전·신정법 동의 흐름 정식 도입 전까지 일반 공개 X.
-  static const _aiBetaEmails = {'cldud970@naver.com'};
+  // 정식 미공개 기능(AI 분석·AI 카드명세서 정리). 화이트리스트를 비워 전체 비노출.
+  // 국외이전·신정법 동의 흐름 정식 도입 시 이메일을 다시 넣어 재활성.
+  static const _aiBetaEmails = <String>{};
   static bool get aiBetaEnabled =>
       _aiBetaEmails.contains(currentUser?.email);
 

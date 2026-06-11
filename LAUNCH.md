@@ -1,5 +1,30 @@
 # 머니플로우 — 출시 체크리스트 (Android + iOS)
 
+## 📌 진행 상황 / 남은 작업 (2026-06-12 갱신)
+
+### ✅ 이번까지 완료 (코드/세팅)
+- 리브랜딩: 식별자 `moneyflow` / 번들 ID `com.cyahn.moneyflow` / 도메인 `moneyflow-kr.vercel.app`
+- 개인정보처리방침 페이지(`web/privacy.html`) 배포 + 설정 메뉴 링크 + 회원가입 동의 체크박스
+- 토스트 비차단화, 자산 계산 순수함수+테스트, R8 minify 설정, Safe Area 보정
+- 온보딩 6장 가이드형 개편 / 도움말 갱신
+- **AI 분석·AI 카드명세서 정리 전체 비노출** (미공개 기능 — `aiBetaEnabled` 화이트리스트 비움)
+- 의존성 안전 업데이트, schema.sql 비완전성 명시
+- 스토어 자료 초안: `STORE_LISTING.md`, `PLAY_DATA_SAFETY.md`
+- 데모 계정 시드 + iOS 6.9" 스크린샷 4장(`~/Desktop/moneyflow_store_screenshots/`)
+
+### 🙋 남은 작업 (사용자/외부 필요)
+1. **개발자 계정 등록** (인증 며칠 — 가장 먼저): Google Play $25 / Apple Developer $99
+2. **Android release 빌드** (Windows, Android SDK 필요): `WINDOWS_TODO.md` 참고 — keystore 생성 + `flutter build appbundle --release` + R8 깨짐 검증
+3. **스크린샷**: iOS는 4장 준비됨 / Play용은 2:1 비율로 크롭 또는 안드 에뮬 재캡처
+4. **대시보드 설정**: Supabase Site URL을 새 도메인으로(확인), Google OAuth 프로덕션 게시(완료)
+5. **스토어 등록**: `STORE_LISTING.md` 카피 + `PLAY_DATA_SAFETY.md` 답변 + 스크린샷 + `.aab`/`.ipa` 업로드
+6. **iOS 출시 시**: "Sign in with Apple" 구현(아래 참고), Apple Developer 계정
+
+### ⏸️ 보류 (정식 도입 전 비노출)
+- AI 분석 / AI 카드명세서 정리 — 국외이전·신정법 동의 흐름 도입 후 `auth.dart`의 `_aiBetaEmails`에 이메일 추가하면 부활
+
+---
+
 Android(Play Store) · iOS(App Store) 동시 출시 준비. 안드가 셋업이 더 빨라서 안드 먼저 마무리 → iOS는 Mac 환경 준비되면 병행.
 
 iOS 특수 주의:

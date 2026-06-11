@@ -228,8 +228,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 subtitle: '스토어 별점 남기기',
                 onTap: _openReview,
               ),
-            ]),
-            _menuGroup([
               _MenuItem(
                 icon: Icons.privacy_tip_outlined,
                 title: '개인정보처리방침',

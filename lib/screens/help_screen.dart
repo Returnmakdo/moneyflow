@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../auth.dart';
 import '../theme.dart';
 import '../utils/nav_back.dart';
 import '../widgets/common.dart';
@@ -108,6 +107,7 @@ class HelpScreen extends StatelessWidget {
             ),
             const _GuideCard(
               icon: Icons.account_balance_wallet_outlined,
+              accent: _HelpAccent.success,
               title: '총자산이 어떻게 계산되나요?',
               points: [
                 '총자산 = 모든 통장 잔고 합 − 카드 미정산 (아직 안 갚은 카드값)',
@@ -141,6 +141,7 @@ class HelpScreen extends StatelessWidget {
             ),
             const _GuideCard(
               icon: Icons.savings_outlined,
+              accent: _HelpAccent.warning,
               title: '예산',
               points: [
                 '카테고리마다 한 달 예산을 정해두면 얼마나 썼는지 막대로 보여드려요',
@@ -150,6 +151,7 @@ class HelpScreen extends StatelessWidget {
             ),
             const _GuideCard(
               icon: Icons.account_balance_outlined,
+              accent: _HelpAccent.success,
               title: '자산',
               points: [
                 '통장과 신용카드를 한곳에 모아서 흐름을 추적해요',
@@ -173,13 +175,13 @@ class HelpScreen extends StatelessWidget {
               ],
             ),
             const _GuideCard(
-              icon: Icons.insights_outlined,
-              title: '분석',
+              icon: Icons.bookmark_border,
+              title: '거래 템플릿',
               points: [
-                '"이번 달 분석하기"를 누르면 AI가 소비 패턴을 짚어드려요',
-                '요약·패턴·예산·제안 네 장을 좌우로 넘기면서 볼 수 있어요',
-                '한 번 분석한 결과는 저장돼서 다음에 들어와도 바로 보여드려요',
-                '거래를 추가하거나 고치면 저장된 결과가 초기화되고 "다시 분석"으로 새로 받아볼 수 있어요',
+                '자주 입력하는 거래(예: 점심·교통·구독)를 템플릿으로 저장해두세요',
+                '거래 추가 화면 위쪽 "템플릿"을 누르면 저장한 내용을 한 번에 불러와요',
+                '불러온 뒤 금액·날짜만 살짝 고쳐서 저장하면 끝이라 반복 입력이 빨라져요',
+                '거래를 수정할 때 "템플릿으로 저장"으로도 만들 수 있어요',
               ],
             ),
             const SizedBox(height: 16),
@@ -187,6 +189,7 @@ class HelpScreen extends StatelessWidget {
             const SizedBox(height: 10),
             const _GuideCard(
               icon: Icons.help_outline,
+              accent: _HelpAccent.neutral,
               title: '카테고리나 태그를 바꾸고 싶어요',
               points: [
                 '설정 → 카테고리 관리에서 자유롭게 추가하거나 이름을 바꿀 수 있어요',
@@ -195,6 +198,7 @@ class HelpScreen extends StatelessWidget {
             ),
             const _GuideCard(
               icon: Icons.help_outline,
+              accent: _HelpAccent.neutral,
               title: '다른 가계부에서 데이터를 옮기고 싶어요',
               points: [
                 '설정 → 데이터 가져오기에서 양식 파일을 먼저 받아보세요',
@@ -205,15 +209,17 @@ class HelpScreen extends StatelessWidget {
             ),
             const _GuideCard(
               icon: Icons.help_outline,
+              accent: _HelpAccent.neutral,
               title: '내 거래를 파일로 백업하고 싶어요',
               points: [
-                '설정 → CSV 내보내기에서 모든 거래를 한 번에 받을 수 있어요',
+                '설정 → 데이터 백업에서 모든 거래를 한 번에 받을 수 있어요',
                 '엑셀이나 구글 시트에서 바로 열려요',
                 '같은 양식이라 나중에 그대로 다시 가져와서 복원할 수 있어요',
               ],
             ),
             const _GuideCard(
               icon: Icons.help_outline,
+              accent: _HelpAccent.neutral,
               title: '잔여할부는 어떻게 등록해요?',
               points: [
                 '카드사가 매달 청구하는 할부금은 설정 → 정기 거래에서 정기지출로 등록해주세요',
@@ -224,6 +230,7 @@ class HelpScreen extends StatelessWidget {
             ),
             const _GuideCard(
               icon: Icons.help_outline,
+              accent: _HelpAccent.neutral,
               title: '친구한테 받은 1/N 정산은 어떻게 처리해요?',
               points: [
                 '카드 결제 거래는 명세서에 찍힌 전체 금액 그대로 등록해주세요',
@@ -233,6 +240,7 @@ class HelpScreen extends StatelessWidget {
             ),
             const _GuideCard(
               icon: Icons.help_outline,
+              accent: _HelpAccent.neutral,
               title: '카드 사용기간 합계와 미정산이 왜 달라요?',
               points: [
                 '두 숫자는 보여드리는 의미가 달라서 다르게 나올 수 있어요',
@@ -241,16 +249,6 @@ class HelpScreen extends StatelessWidget {
                 '지난 결제일에 다 갚은 상태라면 "미정산 = 이번 사용기간 합계 + 그 이후 새로 쓴 금액" 이 돼요',
               ],
             ),
-            if (AuthService.aiBetaEnabled)
-              const _GuideCard(
-                icon: Icons.help_outline,
-                title: 'AI 분석은 얼마나 자주 새로 만들어져요?',
-                points: [
-                  '한 번 분석하면 결과를 저장해뒀다가 다시 들어와도 바로 보여드려요',
-                  '그 달의 거래를 추가하거나 고치거나 지우면 저장된 결과가 자동으로 비워져요',
-                  '비워진 뒤엔 "이번 달 분석하기"나 "다시 분석"을 눌러서 새로 받아볼 수 있어요',
-                ],
-              ),
           ],
         ),
       ),
@@ -277,18 +275,36 @@ class _GroupTitle extends StatelessWidget {
   }
 }
 
+enum _HelpAccent { primary, success, warning, neutral }
+
 class _GuideCard extends StatelessWidget {
   const _GuideCard({
     required this.icon,
     required this.title,
     required this.points,
+    this.accent = _HelpAccent.primary,
   });
   final IconData icon;
   final String title;
   final List<String> points;
+  final _HelpAccent accent;
+
+  Color _color() {
+    switch (accent) {
+      case _HelpAccent.primary:
+        return AppColors.primary;
+      case _HelpAccent.success:
+        return AppColors.success;
+      case _HelpAccent.warning:
+        return AppColors.warning;
+      case _HelpAccent.neutral:
+        return AppColors.text3;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final c = _color();
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: AppCard(
@@ -303,10 +319,10 @@ class _GuideCard extends StatelessWidget {
                   height: 32,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: AppColors.primaryWeak,
+                    color: c.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(icon, size: 18, color: AppColors.primary),
+                  child: Icon(icon, size: 18, color: c),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
