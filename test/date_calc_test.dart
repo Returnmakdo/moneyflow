@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:billionaire/utils/date_calc.dart';
+import 'package:moneyflow/utils/date_calc.dart';
 
 void main() {
   group('clampDay (month 없음)', () {

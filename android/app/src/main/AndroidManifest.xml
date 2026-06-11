@@ -35,7 +35,7 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data
-                    android:scheme="com.cyahn.billionaire"
+                    android:scheme="com.cyahn.moneyflow"
                     android:host="login-callback"/>
             </intent-filter>
         </activity>

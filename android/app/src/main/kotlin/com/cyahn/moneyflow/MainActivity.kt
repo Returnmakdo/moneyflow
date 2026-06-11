@@ -1,4 +1,4 @@
-package com.cyahn.billionaire
+package com.cyahn.moneyflow
 
 import io.flutter.embedding.android.FlutterActivity
 

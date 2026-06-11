@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:billionaire/api/card_calc.dart';
-import 'package:billionaire/api/models.dart';
+import 'package:moneyflow/api/card_calc.dart';
+import 'package:moneyflow/api/models.dart';
 
 CreditCard _card({
   int id = 1,

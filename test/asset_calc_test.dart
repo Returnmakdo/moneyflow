@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:billionaire/api/asset_calc.dart';
-import 'package:billionaire/api/models.dart';
+import 'package:moneyflow/api/asset_calc.dart';
+import 'package:moneyflow/api/models.dart';
 
 Account _acc(int id, {int initial = 0}) => Account(
       id: id,

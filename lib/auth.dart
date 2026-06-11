@@ -167,7 +167,7 @@ class AuthService {
       provider,
       redirectTo: kIsWeb
           ? '${Uri.base.origin}/'
-          : 'com.cyahn.billionaire://login-callback/',
+          : 'com.cyahn.moneyflow://login-callback/',
       authScreenLaunchMode: kIsWeb
           ? LaunchMode.platformDefault
           : LaunchMode.externalApplication,
@@ -224,7 +224,7 @@ class AuthService {
       email.trim(),
       redirectTo: kIsWeb
           ? Uri.base.origin
-          : 'com.cyahn.billionaire://login-callback/',
+          : 'com.cyahn.moneyflow://login-callback/',
     );
   }
 }
